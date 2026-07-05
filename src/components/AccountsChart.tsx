@@ -14,6 +14,15 @@ export default function AccountsChart({ data, lang, onUpdateAccounts, onAddAudit
   const [searchTerm, setSearchTerm] = useState('');
   const [activeGroup, setActiveGroup] = useState<AccountType | 'ALL'>('ALL');
 
+  const formatCurrency = (val: number) => {
+    const hasDecimal = val % 1 !== 0;
+    const formattedNum = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: hasDecimal ? 2 : 0,
+      maximumFractionDigits: hasDecimal ? 2 : 0
+    }).format(val);
+    return isAr ? `${formattedNum} ج.م` : `${formattedNum} EGP`;
+  };
+
   // New account form state
   const [showAddForm, setShowAddForm] = useState(false);
   const [newCode, setNewCode] = useState('');
@@ -173,7 +182,7 @@ export default function AccountsChart({ data, lang, onUpdateAccounts, onAddAudit
                 {isAr ? groupLabels[type].ar.split(' ')[0] : groupLabels[type].en.split(' ')[0]}
               </span>
               <span className="block text-xs font-black text-slate-900 dark:text-white mt-1.5 font-mono truncate">
-                {new Intl.NumberFormat(isAr ? 'ar-EG' : 'en-US', { style: 'currency', currency: 'EGP', maximumFractionDigits: 0 }).format(sum)}
+                {formatCurrency(sum)}
               </span>
             </button>
           );
@@ -401,7 +410,7 @@ export default function AccountsChart({ data, lang, onUpdateAccounts, onAddAudit
                     </td>
                     <td className="py-3 px-4 text-end font-mono text-[11px] font-bold">
                       <span className={balanceVal < 0 ? 'text-rose-600' : 'text-slate-950 dark:text-white'}>
-                        {new Intl.NumberFormat(isAr ? 'ar-EG' : 'en-US', { style: 'currency', currency: 'EGP' }).format(balanceVal)}
+                        {formatCurrency(balanceVal)}
                       </span>
                       <span className="text-[9px] text-slate-400 font-bold ml-1">
                         {isDebit ? (isAr ? 'مَدين' : 'Dr') : (isAr ? 'دائن' : 'Cr')}

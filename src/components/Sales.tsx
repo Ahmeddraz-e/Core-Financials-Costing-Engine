@@ -61,6 +61,14 @@ export default function Sales({
 }: SalesProps) {
   const isAr = lang === 'ar';
   
+  const formatNum = (val: number) => {
+    const hasDecimal = val % 1 !== 0;
+    return new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: hasDecimal ? 2 : 0,
+      maximumFractionDigits: hasDecimal ? 2 : 0
+    }).format(val);
+  };
+  
   // Tabs: 'LIST' (Log of reports) or 'NEW' (Enter new report)
   const [activeTab, setActiveTab] = useState<'LIST' | 'NEW'>('LIST');
 
@@ -494,7 +502,7 @@ export default function Sales({
               {isAr ? 'إجمالي المبيعات المرحلة' : 'Total Posted Revenues'}
             </span>
             <span className="text-sm font-black text-slate-900 dark:text-white font-mono">
-              {totalSalesAll.toLocaleString('ar-EG', { minimumFractionDigits: 1 })} ج.م
+              {formatNum(totalSalesAll)} ج.م
             </span>
           </div>
         </div>
@@ -509,7 +517,7 @@ export default function Sales({
               {isAr ? 'المبالغ النقدية المستلمة' : 'Total Cash Handed Over'}
             </span>
             <span className="text-sm font-black text-slate-900 dark:text-white font-mono">
-              {totalCashAll.toLocaleString('ar-EG', { minimumFractionDigits: 1 })} ج.م
+              {formatNum(totalCashAll)} ج.م
             </span>
           </div>
         </div>
@@ -524,7 +532,7 @@ export default function Sales({
               {isAr ? 'إيداعات الشبكة والفيزا' : 'Bank Visa/Card Collected'}
             </span>
             <span className="text-sm font-black text-slate-900 dark:text-white font-mono">
-              {totalCardAll.toLocaleString('ar-EG', { minimumFractionDigits: 1 })} ج.م
+              {formatNum(totalCardAll)} ج.م
             </span>
           </div>
         </div>
@@ -539,7 +547,7 @@ export default function Sales({
               {isAr ? 'تكلفة الخامات المخصومة' : 'Cost of Food Deducted'}
             </span>
             <span className="text-sm font-black text-slate-900 dark:text-white font-mono">
-              {totalFoodCostAll.toLocaleString('ar-EG', { minimumFractionDigits: 1 })} ج.م
+              {formatNum(totalFoodCostAll)} ج.م
             </span>
           </div>
         </div>
@@ -616,21 +624,21 @@ export default function Sales({
                         <td className="p-4 text-[10px] space-y-1">
                           <div className="flex gap-2 items-center">
                             <span className="bg-amber-100 dark:bg-amber-950/50 text-amber-700 px-1.5 py-0.5 rounded text-[9px] font-extrabold">💵 {isAr ? 'كاش' : 'Cash'}</span>
-                            <span className="font-mono font-bold text-slate-700 dark:text-slate-300">{report.cashAmount || 0} ج.م</span>
+                            <span className="font-mono font-bold text-slate-700 dark:text-slate-300">{formatNum(report.cashAmount || 0)} ج.م</span>
                           </div>
                           <div className="flex gap-2 items-center">
                             <span className="bg-blue-100 dark:bg-blue-950/50 text-blue-700 px-1.5 py-0.5 rounded text-[9px] font-extrabold">💳 {isAr ? 'شبكة' : 'Card'}</span>
-                            <span className="font-mono font-bold text-slate-700 dark:text-slate-300">{report.cardAmount || 0} ج.م</span>
+                            <span className="font-mono font-bold text-slate-700 dark:text-slate-300">{formatNum(report.cardAmount || 0)} ج.م</span>
                           </div>
                         </td>
                         <td className="p-4 font-bold text-slate-900 dark:text-white">
-                          <div className="font-mono">{report.totalAmount.toLocaleString('ar-EG')} ج.م</div>
+                          <div className="font-mono">{formatNum(report.totalAmount)} ج.م</div>
                           <span className="text-[9px] bg-emerald-500/10 text-emerald-600 px-1.5 py-0.5 rounded font-black uppercase font-mono tracking-wider">
                             {isAr ? 'مرحل ومطابق 🟢' : 'Posted OK 🟢'}
                           </span>
                         </td>
                         <td className="p-4 font-mono font-bold text-rose-600">
-                          {report.foodCost} ج.م
+                          {formatNum(report.foodCost)} ج.م
                           <div className="text-[9px] text-slate-400 font-semibold">{isAr ? 'خصم مخزني' : 'Deducted'}</div>
                         </td>
                         <td className="p-4 text-center">
@@ -840,7 +848,7 @@ export default function Sales({
                   <span className="font-bold">{isAr ? 'إجمالي الإيرادات الفاتورة المطلوب مطابقتها:' : 'Required Bill Grand Total:'}</span>
                 </div>
                 <div className="text-base font-black font-mono">
-                  {grandTotalRequired.toLocaleString('ar-EG')} ج.م
+                  {formatNum(grandTotalRequired)} ج.م
                 </div>
               </div>
 
