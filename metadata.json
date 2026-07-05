@@ -1,0 +1,6 @@
+{
+  "name": "LODing ERP",
+  "description": "نظام الإدارة المالية والمحاسبية المتكامل للمطاعم والشركات الغذائية - ERP متكامل يشمل الحسابات العامة، التكاليف، المخازن، المشتريات، والرقابة المتقدمة.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

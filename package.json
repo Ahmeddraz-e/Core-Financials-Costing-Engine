@@ -1,0 +1,69 @@
+{
+  "name": "react-example",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "electron.cjs",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build": "npm run build:front && npm run build:server",
+    "build:front": "vite build",
+    "build:server": "esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "start": "node dist/server.cjs",
+    "clean": "rm -rf dist loding-erp.db backups dist-electron",
+    "lint": "tsc --noEmit",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "electron:start": "npm run build && npm run rebuild && electron .",
+    "electron:dist": "npm run build && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.loding.erp",
+    "productName": "LODing ERP System",
+    "copyright": "Copyright © 2026 Emad Elarapy",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "win": {
+      "target": "portable",
+      "icon": "public/favicon.ico"
+    },
+    "files": [
+      "dist/**/*",
+      "electron.cjs",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**"
+    ],
+    "npmRebuild": true
+  },
+  "dependencies": {
+    "@google/genai": "^2.4.0",
+    "@tailwindcss/vite": "^4.1.14",
+    "@types/better-sqlite3": "^7.6.13",
+    "@vitejs/plugin-react": "^5.0.4",
+    "better-sqlite3": "^12.11.1",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "recharts": "^3.9.0",
+    "vite": "^6.2.3"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.2",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "autoprefixer": "^10.4.21",
+    "electron": "^42.5.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.3"
+  }
+}

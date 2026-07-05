@@ -1,0 +1,48 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Cairo", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-brand-dark: #0f172a; /* Navy dark slate */
+  --color-brand-royal: #1d4ed8; /* Royal blue */
+  --color-brand-accent: #38bdf8; /* Light professional blue */
+  --color-success: #10b981; /* Green */
+  --color-warning: #f97316; /* Orange */
+  --color-danger: #ef4444; /* Red */
+}
+
+/* Custom scrollbars for a premium desktop app feel */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #475569;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Layout animations and clean transitions */
+html {
+  font-size: 118.75%; /* Scale up all text: text-xs ≈ 14.25px, text-sm ≈ 16.6px */
+}
+body {
+  transition: background-color 0.3s, color 0.3s;
+}
+
+input, select, textarea {
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
