@@ -277,11 +277,11 @@ export function printDocument(htmlContent: string, title: string): void {
 
 /** Format currency with EGP */
 export function fmtCurrency(val: number, lang: 'ar' | 'en' = 'ar'): string {
-  return new Intl.NumberFormat(lang === 'ar' ? 'ar-EG-u-nu-latn' : 'en-US', {
-    style: 'currency',
-    currency: 'EGP',
+  const formattedNum = new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2
   }).format(val);
+  return lang === 'ar' ? `${formattedNum} ج.م` : `${formattedNum} EGP`;
 }
 
 /** Format date */

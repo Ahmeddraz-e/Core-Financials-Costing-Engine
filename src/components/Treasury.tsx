@@ -107,7 +107,11 @@ export default function TreasuryModule({
 
   // Helper formatting functions
   const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat(isAr ? 'ar-EG-u-nu-latn' : 'en-US', { style: 'currency', currency: 'EGP', maximumFractionDigits: 2 }).format(val);
+    const formattedNum = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(val);
+    return isAr ? `${formattedNum} ج.م` : `${formattedNum} EGP`;
   };
 
   // Find linked accounts or default
