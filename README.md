@@ -107,5 +107,5 @@ npm run rebuild
 ---
 
 ## 📝 License | الترخيص
-Copyright © 2026 ahmed draz. All rights reserved.  
-حقوق الطبع محفوظة لعماد العرابي 2026.
+Copyright © 2026 Ahmed Deraz. All rights reserved.  
+حقوق الطبع محفوظة لأحمد دراز 2026.

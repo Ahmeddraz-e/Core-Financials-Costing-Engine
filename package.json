@@ -19,7 +19,7 @@
   "build": {
     "appId": "com.loding.erp",
     "productName": "LODing ERP System",
-    "copyright": "Copyright © 2026 Emad Elarapy",
+    "copyright": "Copyright © 2026 Ahmed Deraz",
     "directories": {
       "output": "dist-electron"
     },
