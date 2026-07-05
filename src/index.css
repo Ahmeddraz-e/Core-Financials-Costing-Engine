@@ -8,10 +8,10 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
   
   --color-brand-dark: #0f172a; /* Navy dark slate */
-  --color-brand-royal: #1d4ed8; /* Royal blue */
-  --color-brand-accent: #38bdf8; /* Light professional blue */
+  --color-brand-royal: #1e40af; /* Deep Royal blue */
+  --color-brand-accent: #10b981; /* Emerald green */
   --color-success: #10b981; /* Green */
-  --color-warning: #f97316; /* Orange */
+  --color-warning: #f59e0b; /* Orange */
   --color-danger: #ef4444; /* Red */
 }
 

@@ -59,7 +59,7 @@ export default function Header({
         
         {/* Branch Selector */}
         <div className="relative flex items-center gap-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-700 dark:text-slate-300">
-          <MapPin className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+          <MapPin className="h-3.5 w-3.5 text-blue-600 dark:text-sky-400 shrink-0" />
           <select
             id="header_branch_select"
             value={activeBranch}
@@ -74,7 +74,7 @@ export default function Header({
 
         {/* Accounting Period Selector */}
         <div className="relative flex items-center gap-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-700 dark:text-slate-300">
-          <Calendar className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+          <Calendar className="h-3.5 w-3.5 text-blue-600 dark:text-sky-400 shrink-0" />
           <select
             id="header_period_select"
             value={activePeriod}
