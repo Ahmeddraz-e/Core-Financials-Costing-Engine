@@ -86,6 +86,8 @@ export default function TreasuryModule({
   const [voucherRef, setVoucherRef] = useState('');
   const [chequeDueDate, setChequeDueDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedCheckNumber, setSelectedCheckNumber] = useState<number | ''>('');
+  const [chequeImage, setChequeImage] = useState<string>('');
+  const [previewChequeImage, setPreviewChequeImage] = useState<string | null>(null);
 
   // Transfer Form State
   const [transferAmount, setTransferAmount] = useState(0);
@@ -652,7 +654,8 @@ export default function TreasuryModule({
       treasuryId: !currentEntity.isBank ? currentEntity.id : undefined,
       bankAccountId: currentEntity.isBank ? currentEntity.id : undefined,
       description: voucherDesc,
-      referenceNumber: payMethod === 'CHEQUE' && selectedCheckNumber ? String(selectedCheckNumber) : voucherRef
+      referenceNumber: payMethod === 'CHEQUE' && selectedCheckNumber ? String(selectedCheckNumber) : voucherRef,
+      chequeImage: payMethod === 'CHEQUE' ? chequeImage : undefined
     };
 
     // 3. Create General Ledger Auto Journal Entry
@@ -711,6 +714,7 @@ export default function TreasuryModule({
     setVoucherDesc('');
     setVoucherRef('');
     setSelectedCheckNumber('');
+    setChequeImage('');
     setActiveDetailForm('NONE');
     window.showAlert(`تم حفظ السند ${docNumber} بنجاح وترحيل القيود`, 'Voucher saved and posted successfully', 'success');
   };
@@ -1768,7 +1772,26 @@ export default function TreasuryModule({
                     {statementHistory.slice(0, 6).map(tx => (
                       <tr key={tx.id} className="hover:bg-slate-50/40">
                         <td className="py-2.5 px-3 text-start text-slate-500 font-mono">{tx.date}</td>
-                        <td className="py-2.5 px-3 text-start font-mono text-blue-600 dark:text-sky-400 font-bold">{tx.number}</td>
+                        <td className="py-2.5 px-3 text-start font-mono text-blue-600 dark:text-sky-400 font-bold">
+                          <div className="flex items-center gap-1.5">
+                            <span>{tx.number}</span>
+                            {(() => {
+                              const v = (data.vouchers || []).find(v => v.voucherNumber === tx.number);
+                              if (v && v.chequeImage) {
+                                return (
+                                  <button
+                                    onClick={() => setPreviewChequeImage(v.chequeImage!)}
+                                    className="p-1 rounded bg-purple-50 dark:bg-purple-950 text-purple-600 hover:text-purple-800 transition-colors cursor-pointer"
+                                    title={isAr ? 'عرض صورة الشيك المرفقة' : 'View attached cheque copy'}
+                                  >
+                                    <Eye className="h-3 w-3" />
+                                  </button>
+                                );
+                              }
+                              return null;
+                            })()}
+                          </div>
+                        </td>
                         <td className="py-2.5 px-3 text-start">
                           <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${
                             tx.type.includes('RECEIPT') ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-450' :
@@ -1957,10 +1980,24 @@ export default function TreasuryModule({
                           className="w-full text-xs font-semibold px-3.5 py-2 border rounded-xl bg-white dark:bg-slate-950 text-slate-900 dark:text-white focus:outline-none" />
                       </div>
 
-                      {/* Simulated upload field */}
+                      {/* Real upload field */}
                       <div className="space-y-1.5">
                         <label className="text-[10px] font-extrabold text-purple-650 dark:text-purple-400 block">{isAr ? 'مرفق صورة الشيك (اختياري)' : 'Upload Cheque copy'}</label>
-                        <input type="file" disabled className="w-full text-xs text-slate-400 file:bg-purple-100 file:border-none file:px-3 file:py-1 file:rounded-lg file:text-xs" />
+                        <input 
+                          type="file" 
+                          accept="image/*"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onloadend = () => {
+                                setChequeImage(reader.result as string);
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                          className="w-full text-xs text-slate-400 file:bg-purple-100 file:border-none file:px-3 file:py-1 file:rounded-lg file:text-xs cursor-pointer" 
+                        />
                       </div>
                     </div>
                   )}
@@ -2182,7 +2219,26 @@ export default function TreasuryModule({
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-900/60 text-slate-700 dark:text-slate-350">
                         {statementHistory.map(tx => (
                           <tr key={tx.id} className="hover:bg-slate-50/50">
-                            <td className="py-2 px-3 text-start font-mono text-blue-650 dark:text-sky-400 font-bold">{tx.number}</td>
+                            <td className="py-2 px-3 text-start font-mono text-blue-650 dark:text-sky-400 font-bold">
+                              <div className="flex items-center gap-1.5">
+                                <span>{tx.number}</span>
+                                {(() => {
+                                  const v = (data.vouchers || []).find(v => v.voucherNumber === tx.number);
+                                  if (v && v.chequeImage) {
+                                    return (
+                                      <button
+                                        onClick={() => setPreviewChequeImage(v.chequeImage!)}
+                                        className="p-1 rounded bg-purple-50 dark:bg-purple-950 text-purple-600 hover:text-purple-800 transition-colors cursor-pointer"
+                                        title={isAr ? 'عرض صورة الشيك المرفقة' : 'View attached cheque copy'}
+                                      >
+                                        <Eye className="h-3 w-3" />
+                                      </button>
+                                    );
+                                  }
+                                  return null;
+                                })()}
+                              </div>
+                            </td>
                             <td className="py-2 px-3 text-start font-mono text-slate-500">{tx.date}</td>
                             <td className="py-2 px-3 text-start">
                               <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${
@@ -2259,6 +2315,29 @@ export default function TreasuryModule({
             </div>
           )}
 
+        </div>
+      )}
+
+      {/* Cheque Image Preview Modal */}
+      {previewChequeImage && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-[9999] p-4">
+          <div className="bg-white dark:bg-slate-950 p-6 rounded-3xl border border-slate-250 dark:border-slate-800 max-w-2xl w-full relative">
+            <div className="flex justify-between items-center mb-4 border-b pb-2 border-slate-100 dark:border-slate-850">
+              <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                <Eye className="h-5 w-5 text-blue-600" />
+                <span>{isAr ? 'عرض صورة الشيك المرفقة' : 'Attached Cheque Image'}</span>
+              </h3>
+              <button onClick={() => setPreviewChequeImage(null)} className="text-slate-400 hover:text-slate-650 cursor-pointer"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="flex justify-center bg-slate-50 dark:bg-slate-900 p-2 rounded-2xl border dark:border-slate-800 overflow-hidden max-h-[70vh]">
+              <img src={previewChequeImage} alt="Cheque Copy" className="max-w-full max-h-full object-contain rounded-xl" />
+            </div>
+            <div className="flex justify-end mt-4">
+              <button onClick={() => setPreviewChequeImage(null)} className="bg-slate-100 dark:bg-slate-850 hover:bg-slate-200 text-slate-800 dark:text-slate-200 font-bold text-xs py-2.5 px-6 rounded-xl cursor-pointer">
+                {isAr ? 'إغلاق' : 'Close'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

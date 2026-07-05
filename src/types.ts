@@ -460,6 +460,7 @@ export interface Voucher {
   description: string;
   referenceNumber?: string;
   journalEntryId?: string;
+  chequeImage?: string;
 }
 
 // ═══════════════════════════════════════════════

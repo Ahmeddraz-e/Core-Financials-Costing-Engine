@@ -44,6 +44,11 @@ export function initDatabase(dbPath: string): Database.Database {
     db.prepare('ALTER TABLE bank_accounts ADD COLUMN accountId TEXT').run();
   } catch (err) {}
 
+  // Migration safety: ensure chequeImage column exists in vouchers
+  try {
+    db.prepare('ALTER TABLE vouchers ADD COLUMN chequeImage TEXT DEFAULT \'\'').run();
+  } catch (err) {}
+
   seedDatabase(db);
   return db;
 }
@@ -333,7 +338,7 @@ export function saveERPDataDiff(db: Database.Database, data: ERPData): void {
     // 13. Sync vouchers
     syncTable(db, 'vouchers', data.vouchers || [], 'id', [
       'voucherNumber', 'type', 'date', 'amount', 'partyType', 'partyId', 'partyName',
-      'paymentMethod', 'treasuryId', 'bankAccountId', 'description', 'referenceNumber', 'journalEntryId'
+      'paymentMethod', 'treasuryId', 'bankAccountId', 'description', 'referenceNumber', 'journalEntryId', 'chequeImage'
     ]);
 
     // 14. Sync sales returns

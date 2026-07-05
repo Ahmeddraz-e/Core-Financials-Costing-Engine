@@ -309,7 +309,8 @@ CREATE TABLE IF NOT EXISTS vouchers (
   bankAccountId TEXT DEFAULT '',
   description TEXT NOT NULL DEFAULT '',
   referenceNumber TEXT DEFAULT '',
-  journalEntryId TEXT DEFAULT ''
+  journalEntryId TEXT DEFAULT '',
+  chequeImage TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS sales_returns (
