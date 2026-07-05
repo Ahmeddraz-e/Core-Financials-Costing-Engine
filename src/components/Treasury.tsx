@@ -968,6 +968,21 @@ export default function TreasuryModule({
     );
   };
 
+  // Export checkbook checks to Excel
+  const handleExportCheckbookToExcel = (book: Checkbook) => {
+    const bank = data.bankAccounts.find(b => b.id === book.bankAccountId);
+    const rows = book.checks.map(c => ({
+      'رقم الشيك': c.number,
+      'حالة الشيك': c.status === 'UNUSED' ? (isAr ? 'متاح / غير مستخدم' : 'Unused') :
+                   c.status === 'USED' ? (isAr ? 'صادر / مستخدم' : 'Used') :
+                   (isAr ? 'ملغى' : 'Cancelled'),
+      'البنك المرتبط': bank ? (isAr ? bank.bankNameAr : bank.bankNameEn) : '',
+      'رقم الحساب البنكي': bank ? bank.accountNumber : '',
+      'دفتر الشيكات': book.code
+    }));
+    exportToCSV(rows, `checkbook-${book.code}`);
+  };
+
   // Detailed Account Statement Printing
   const handlePrintStatement = () => {
     if (!currentEntity) return;
@@ -1486,15 +1501,24 @@ export default function TreasuryModule({
             
             {/* Header Details */}
             <div className="flex flex-col md:flex-row justify-between gap-4 border-b pb-4 border-slate-50 dark:border-slate-900">
-              <div>
-                <h2 className="text-lg font-black text-slate-950 dark:text-white">
-                  {isAr ? `دفتر شيكات: ${book.code}` : `Checkbook: ${book.code}`}
-                </h2>
-                <p className="text-slate-400 text-xs font-bold mt-1">
-                  {isAr 
-                    ? `مرتبط بالبنك: ${bank ? bank.bankNameAr : ''} — النطاق الرقمي: ${book.startNumber} إلى ${book.endNumber}`
-                    : `Linked with: ${bank ? bank.bankNameEn : ''} — Range: ${book.startNumber} to ${book.endNumber}`}
-                </p>
+              <div className="flex items-start justify-between w-full md:w-auto gap-6">
+                <div>
+                  <h2 className="text-lg font-black text-slate-950 dark:text-white">
+                    {isAr ? `دفتر شيكات: ${book.code}` : `Checkbook: ${book.code}`}
+                  </h2>
+                  <p className="text-slate-400 text-xs font-bold mt-1">
+                    {isAr 
+                      ? `مرتبط بالبنك: ${bank ? bank.bankNameAr : ''} — النطاق الرقمي: ${book.startNumber} إلى ${book.endNumber}`
+                      : `Linked with: ${bank ? bank.bankNameEn : ''} — Range: ${book.startNumber} to ${book.endNumber}`}
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleExportCheckbookToExcel(book)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[10px] cursor-pointer shadow-md shadow-emerald-500/10 self-center"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>{isAr ? 'تصدير لـ Excel' : 'Export to Excel'}</span>
+                </button>
               </div>
 
               {/* Counts summary cards */}
@@ -1701,13 +1725,13 @@ export default function TreasuryModule({
                   <span>{isAr ? 'تعديل البيانات' : 'Edit Info'}</span>
                 </button>
 
-                {/* 6. Print Statement directly */}
+                {/* 6. Export Statement directly to Excel */}
                 <button
-                  onClick={handlePrintStatement}
-                  className="p-3.5 rounded-2xl border text-center hover:bg-slate-50 dark:hover:bg-slate-900 border-slate-100 dark:border-slate-800 transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer"
+                  onClick={handleExportStatement}
+                  className="p-3.5 rounded-2xl border text-center hover:bg-emerald-50 dark:hover:bg-emerald-950/20 hover:border-emerald-300 border-slate-100 dark:border-slate-800 transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer text-emerald-600 dark:text-emerald-450"
                 >
-                  <Printer className="h-5 w-5 text-slate-500" />
-                  <span>{isAr ? 'طباعة كشف الحساب' : 'Print Statement'}</span>
+                  <Download className="h-5 w-5" />
+                  <span>{isAr ? 'تصدير لـ Excel' : 'Export to Excel'}</span>
                 </button>
               </div>
 

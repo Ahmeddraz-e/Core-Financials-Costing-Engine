@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { BookOpen, Plus, Trash2, Check, AlertCircle, Save, Calendar, Eye, FileText, CheckCircle } from 'lucide-react';
+import { BookOpen, Plus, Trash2, Check, AlertCircle, Save, Calendar, Eye, FileText, CheckCircle, Download } from 'lucide-react';
 import { ERPData, JournalEntry, JournalEntryType, JournalLine, Account } from '../types';
+import { exportToCSV } from '../utils/printUtils';
 
 interface JournalEntriesProps {
   data: ERPData;
@@ -20,6 +21,34 @@ export default function JournalEntries({
   const isAr = lang === 'ar';
   const [showAddForm, setShowAddForm] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<JournalEntry | null>(null);
+
+  const formatCurrency = (val: number) => {
+    const hasDecimal = val % 1 !== 0;
+    const formattedNum = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: hasDecimal ? 2 : 0,
+      maximumFractionDigits: hasDecimal ? 2 : 0
+    }).format(val);
+    return isAr ? `${formattedNum} ج.م` : `${formattedNum} EGP`;
+  };
+
+  const handleExportJournalToExcel = () => {
+    const flatEntries = data.journalEntries.flatMap(entry => 
+      entry.lines.map(line => {
+        const acc = data.accounts.find(a => a.id === line.accountId);
+        return {
+          'رقم القيد': entry.entryNumber,
+          'التاريخ': entry.date,
+          'نوع القيد': entry.type,
+          'البيان': entry.description,
+          'الحساب المحاسبي': acc ? `${acc.code} - ${isAr ? acc.nameAr : acc.nameEn}` : '',
+          'مدين (Debit)': line.debit || 0,
+          'دائن (Credit)': line.credit || 0,
+          'الاعتماد': entry.approvedBy || ''
+        };
+      })
+    );
+    exportToCSV(flatEntries, 'journal_entries');
+  };
 
   // New Journal Entry Form state
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
@@ -152,14 +181,24 @@ export default function JournalEntries({
           </p>
         </div>
         
-        <button
-          id="new_jv_toggle_btn"
-          onClick={() => setShowAddForm(!showAddForm)}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl font-bold text-xs shadow-md shadow-blue-500/15"
-        >
-          <Plus className="h-4 w-4" />
-          <span>{isAr ? 'إدراج قيد تسوية جديد' : 'Record New Journal Entry'}</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleExportJournalToExcel}
+            className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-800 text-white px-4 py-2.5 rounded-xl font-bold text-xs shadow-md shadow-emerald-500/10 cursor-pointer"
+          >
+            <Download className="h-4 w-4" />
+            <span>{isAr ? 'تصدير لـ Excel' : 'Export to Excel'}</span>
+          </button>
+
+          <button
+            id="new_jv_toggle_btn"
+            onClick={() => setShowAddForm(!showAddForm)}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl font-bold text-xs shadow-md shadow-blue-500/15 cursor-pointer"
+          >
+            <Plus className="h-4 w-4" />
+            <span>{isAr ? 'إدراج قيد تسوية جديد' : 'Record New Journal Entry'}</span>
+          </button>
+        </div>
       </div>
 
       {/* NEW JOURNAL ENTRY BUILDER */}
@@ -422,7 +461,7 @@ export default function JournalEntries({
                         {entry.description}
                       </td>
                       <td className="py-3 px-4 text-end font-mono text-[11px] font-bold text-slate-900 dark:text-white">
-                        {new Intl.NumberFormat(isAr ? 'ar-EG' : 'en-US', { style: 'currency', currency: 'EGP' }).format(totalVal)}
+                        {formatCurrency(totalVal)}
                       </td>
                       <td className="py-3 px-4 text-center">
                         <span className="inline-flex items-center gap-1 bg-green-500/10 text-green-600 px-2.5 py-0.5 rounded-full text-[10px] font-bold">
