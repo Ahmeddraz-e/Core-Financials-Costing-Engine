@@ -388,25 +388,81 @@ export function footerHTML(): string {
 export function exportToCSV(data: Record<string, any>[], filename: string): void {
   if (!data.length) return;
 
-  // BOM for Arabic support in Excel
-  const BOM = '\uFEFF';
   const headers = Object.keys(data[0]);
-  const csvRows = [
-    headers.join(','),
-    ...data.map(row =>
-      headers.map(h => {
-        let cell = row[h] ?? '';
-        cell = String(cell).replace(/"/g, '""');
-        return `"${cell}"`;
-      }).join(',')
-    )
-  ];
+  const title = filename.replace(/_/g, ' ').toUpperCase();
 
-  const blob = new Blob([BOM + csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  let html = `
+    <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; direction: rtl; }
+        .title-cell { font-size: 16px; font-weight: bold; color: #1e3a8a; text-align: center; height: 35px; background-color: #f8fafc; }
+        .meta-cell { font-size: 10px; color: #64748b; text-align: right; }
+        th { background-color: #1e40af; color: #ffffff; font-weight: bold; border: 1px solid #cbd5e1; padding: 10px; text-align: center; }
+        td { border: 1px solid #e2e8f0; padding: 8px; text-align: right; }
+        .text-left { text-align: left; }
+        .text-center { text-align: center; }
+        .num-cell { mso-number-format:"\\#,##0\\.00"; }
+        .int-cell { mso-number-format:"\\#,##0"; }
+        .date-cell { mso-number-format:"yyyy\\-mm\\-dd"; text-align: center; }
+      </style>
+    </head>
+    <body>
+      <table>
+        <!-- Title block -->
+        <tr>
+          <td colspan="${headers.length}" class="title-cell" style="font-weight:bold; font-size:16px; color:#1e3a8a; text-align:center;">${title} - REPORT</td>
+        </tr>
+        <tr>
+          <td colspan="${headers.length}" class="meta-cell" style="color:#64748b; text-align:right; font-size:10px;">تاريخ التصدير: ${new Date().toLocaleString('ar-EG-u-nu-latn')}</td>
+        </tr>
+        <tr></tr> <!-- Spacer -->
+        
+        <!-- Table Headers -->
+        <tr>
+          ${headers.map(h => `<th style="background-color:#1e40af; color:#ffffff; font-weight:bold; border:1px solid #cbd5e1; text-align:center;">${h}</th>`).join('')}
+        </tr>
+        
+        <!-- Table Data Rows -->
+        ${data.map(row => `
+          <tr>
+            ${headers.map(h => {
+              const val = row[h];
+              let cellClass = '';
+              let inlineStyle = '';
+              
+              if (typeof val === 'number') {
+                cellClass = val % 1 === 0 ? 'int-cell' : 'num-cell';
+              } else if (typeof val === 'string') {
+                if (val.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                  cellClass = 'date-cell';
+                } else if (val.includes('ج.م') || val.includes('EGP')) {
+                  cellClass = 'num-cell';
+                } else if (val === 'ACTIVE' || val.includes('مرحل') || val.includes('متاح') || val === 'USED' || val === 'UNUSED' || val.includes('مطابق')) {
+                  inlineStyle = 'background-color: #d1fae5; color: #065f46; text-align: center;';
+                } else if (val === 'CANCELLED' || val.includes('ملغى') || val === 'BOUNCED') {
+                  inlineStyle = 'background-color: #fee2e2; color: #991b1b; text-align: center;';
+                } else {
+                  cellClass = 'text-left';
+                }
+              }
+              
+              const formattedVal = val === null || val === undefined ? '' : val;
+              return `<td class="${cellClass}" style="${inlineStyle}">${formattedVal}</td>`;
+            }).join('')}
+          </tr>
+        `).join('')}
+      </table>
+    </body>
+    </html>
+  `;
+
+  const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${filename}_${new Date().toISOString().split('T')[0]}.csv`;
+  a.download = `${filename}_${new Date().toISOString().split('T')[0]}.xls`;
   a.click();
   URL.revokeObjectURL(url);
 }
