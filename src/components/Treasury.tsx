@@ -1136,7 +1136,7 @@ export default function TreasuryModule({
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
         <div>
           <h1 className="text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2.5">
-            <Coins className="h-7 w-7 text-[#0056b3] dark:text-[#00c6ff]" />
+            <Coins className="h-7 w-7 text-blue-600 dark:text-sky-400" />
             <span>{isAr ? 'وحدة إدارة الخزائن والبنوك المركزية' : 'Consolidated Treasury & Corporate Banking Center'}</span>
           </h1>
           <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold mt-1">

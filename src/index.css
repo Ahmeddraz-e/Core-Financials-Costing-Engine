@@ -13,6 +13,12 @@
   --color-success: #10b981; /* Green */
   --color-warning: #f59e0b; /* Orange */
   --color-danger: #ef4444; /* Red */
+
+  /* Global Color Remapping for theme consistency across all files */
+  --color-blue-600: #1e40af;
+  --color-blue-700: #1a368d;
+  --color-emerald-600: #10b981;
+  --color-emerald-700: #059669;
 }
 
 /* Custom scrollbars for a premium desktop app feel */
@@ -34,9 +40,14 @@
   background: #94a3b8;
 }
 
-/* Layout animations and clean transitions */
+/* Layout animations, global typography, and clean transitions */
 html {
   font-size: 118.75%; /* Scale up all text: text-xs ≈ 14.25px, text-sm ≈ 16.6px */
+}
+body, button, input, select, textarea {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 body {
   transition: background-color 0.3s, color 0.3s;

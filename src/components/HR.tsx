@@ -933,7 +933,7 @@ export default function HRModule({
                 {/* Brand & ERP Header */}
                 <div className="flex justify-between items-start">
                   <div>
-                    <h2 className="text-lg font-black text-[#0056b3] dark:text-[#00c6ff] tracking-tight">LODing ERP</h2>
+                    <h2 className="text-lg font-black text-blue-600 dark:text-sky-400 tracking-tight">LODing ERP</h2>
                     <span className="text-[9px] font-extrabold text-slate-400 uppercase block tracking-widest">{isAr ? 'نظام الموارد البشرية والرواتب المعتمد' : 'Verified Human Capital & Payroll Slip'}</span>
                   </div>
                   <div className="text-end font-mono text-[10px] text-slate-400 font-bold">
