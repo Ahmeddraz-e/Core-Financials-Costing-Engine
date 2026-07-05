@@ -69,9 +69,12 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
   const [activeAlertTab, setActiveAlertTab] = useState<'inventory' | 'finance' | 'cheques'>('inventory');
 
   const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat(isAr ? 'ar-EG' : 'en-US', {
-      style: 'currency', currency: 'EGP', maximumFractionDigits: 0
+    const hasDecimal = val % 1 !== 0;
+    const formattedNum = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: hasDecimal ? 2 : 0,
+      maximumFractionDigits: hasDecimal ? 2 : 0
     }).format(val);
+    return isAr ? `${formattedNum} ج.م` : `${formattedNum} EGP`;
   };
 
   const formatPercent = (val: number) => val.toFixed(1) + '%';
@@ -151,6 +154,18 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
       .map(([date, v]) => ({ date: date.slice(5), fullDate: date, total: v.total, foodCost: v.foodCost }))
       .sort((a, b) => a.fullDate.localeCompare(b.fullDate));
   }, [data.sales]);
+
+  const peakSales = useMemo(() => {
+    if (dailySalesData.length === 0) return { date: '-', total: 0 };
+    return dailySalesData.reduce((max, d) => d.total > max.total ? d : max, { date: '-', total: 0 });
+  }, [dailySalesData]);
+
+  const avgSales = useMemo(() => {
+    if (dailySalesData.length === 0) return 0;
+    return dailySalesData.reduce((sum, d) => sum + d.total, 0) / dailySalesData.length;
+  }, [dailySalesData]);
+
+  const [salesChartType, setSalesChartType] = useState<'AREA' | 'BAR' | 'LINE'>('AREA');
 
   const channelData = useMemo(() => [
     { name: isAr ? 'صالة' : 'Dine-In', value: dineInSales, color: '#3b82f6', totalSales },
@@ -386,7 +401,7 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-white dark:bg-slate-950 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-xs">
-          <div className="flex justify-between items-center mb-4">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
             <div>
               <h3 className="text-sm font-extrabold text-slate-800 dark:text-slate-200">
                 {isAr ? 'اتجاه المبيعات اليومية' : 'Daily Sales Trends'}
@@ -395,73 +410,102 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
                 {isAr ? `بناءً على ${dailySalesData.length} يوم مبيعات` : `Based on ${dailySalesData.length} days of sales`}
               </span>
             </div>
-            <div className="flex gap-4 text-xs font-bold">
-              <span className="flex items-center gap-1.5 text-blue-600">
-                <span className="h-2 w-2 rounded-full bg-blue-600"></span>
-                {isAr ? 'المبيعات' : 'Sales'}
-              </span>
-              <span className="flex items-center gap-1.5 text-rose-500">
-                <span className="h-2 w-2 rounded-full bg-rose-500"></span>
-                {isAr ? 'تكلفة الأغذية' : 'Food Cost'}
-              </span>
+
+            {/* Interactive chart type switcher */}
+            <div className="flex rounded-xl bg-slate-100 dark:bg-slate-900 p-1 border border-slate-200/50 dark:border-slate-850">
+              {(['AREA', 'LINE', 'BAR'] as const).map(type => (
+                <button
+                  key={type}
+                  onClick={() => setSalesChartType(type)}
+                  className={`px-3 py-1.5 text-[9.5px] font-bold rounded-lg transition-all cursor-pointer ${
+                    salesChartType === type
+                      ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-sky-400 shadow-sm font-black'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-350'
+                  }`}
+                >
+                  {type === 'AREA' ? (isAr ? 'مساحة' : 'Area') :
+                   type === 'LINE' ? (isAr ? 'خطوط' : 'Line') :
+                   (isAr ? 'أعمدة' : 'Bar')}
+                </button>
+              ))}
             </div>
           </div>
-          <div className="h-72">
-            {dailySalesData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={dailySalesData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="salesGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
-                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="costGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.15} />
-                      <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" className="dark:stroke-slate-800/60" />
-                  <XAxis 
-                    dataKey="date" 
-                    tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }} 
-                    tickLine={false} 
-                    axisLine={false} 
-                    dy={8}
-                  />
-                  <YAxis 
-                    tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }} 
-                    tickLine={false} 
-                    axisLine={false} 
-                    dx={-8}
-                    tickFormatter={(value) => formatCurrency(value).replace('EGP', '').trim()}
-                  />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Area 
-                    name={isAr ? 'المبيعات' : 'Sales'}
-                    type="monotone" 
-                    dataKey="total" 
-                    stroke="#3b82f6" 
-                    strokeWidth={3} 
-                    fill="url(#salesGrad)" 
-                    activeDot={{ r: 6, strokeWidth: 0, fill: '#3b82f6' }}
-                  />
-                  <Area 
-                    name={isAr ? 'تكلفة الأغذية' : 'Food Cost'}
-                    type="monotone" 
-                    dataKey="foodCost" 
-                    stroke="#f43f5e" 
-                    strokeWidth={2} 
-                    strokeDasharray="4 3" 
-                    fill="url(#costGrad)" 
-                    activeDot={{ r: 4, strokeWidth: 0, fill: '#f43f5e' }}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-full flex items-center justify-center text-slate-400 dark:text-slate-600 text-sm font-bold">
-                {isAr ? 'لا توجد مبيعات مسجلة بعد. أضف مبيعات لعرض الرسم البياني.' : 'No sales recorded yet. Add sales to see the chart.'}
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <div className="md:col-span-3 h-72">
+              {dailySalesData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  {salesChartType === 'AREA' ? (
+                    <AreaChart data={dailySalesData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="salesGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
+                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                        </linearGradient>
+                        <linearGradient id="costGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.15} />
+                          <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" className="dark:stroke-slate-800/60" />
+                      <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }} tickLine={false} axisLine={false} dy={8} />
+                      <YAxis tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }} tickLine={false} axisLine={false} dx={-8} tickFormatter={(value) => formatCurrency(value).replace('EGP', '').trim()} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Area name={isAr ? 'المبيعات' : 'Sales'} type="monotone" dataKey="total" stroke="#3b82f6" strokeWidth={3} fill="url(#salesGrad)" activeDot={{ r: 6, strokeWidth: 0, fill: '#3b82f6' }} />
+                      <Area name={isAr ? 'تكلفة الأغذية' : 'Food Cost'} type="monotone" dataKey="foodCost" stroke="#f43f5e" strokeWidth={2} strokeDasharray="4 3" fill="url(#costGrad)" activeDot={{ r: 4, strokeWidth: 0, fill: '#f43f5e' }} />
+                    </AreaChart>
+                  ) : salesChartType === 'LINE' ? (
+                    <LineChart data={dailySalesData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" className="dark:stroke-slate-800/60" />
+                      <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }} tickLine={false} axisLine={false} dy={8} />
+                      <YAxis tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }} tickLine={false} axisLine={false} dx={-8} tickFormatter={(value) => formatCurrency(value).replace('EGP', '').trim()} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Line name={isAr ? 'المبيعات' : 'Sales'} type="monotone" dataKey="total" stroke="#3b82f6" strokeWidth={3} activeDot={{ r: 6 }} />
+                      <Line name={isAr ? 'تكلفة الأغذية' : 'Food Cost'} type="monotone" dataKey="foodCost" stroke="#f43f5e" strokeWidth={2} strokeDasharray="4 3" activeDot={{ r: 4 }} />
+                    </LineChart>
+                  ) : (
+                    <BarChart data={dailySalesData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" className="dark:stroke-slate-800/60" />
+                      <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }} tickLine={false} axisLine={false} dy={8} />
+                      <YAxis tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }} tickLine={false} axisLine={false} dx={-8} tickFormatter={(value) => formatCurrency(value).replace('EGP', '').trim()} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Bar name={isAr ? 'المبيعات' : 'Sales'} dataKey="total" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                      <Bar name={isAr ? 'تكلفة الأغذية' : 'Food Cost'} dataKey="foodCost" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  )}
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-slate-400 dark:text-slate-600 text-sm font-bold">
+                  {isAr ? 'لا توجد مبيعات مسجلة بعد. أضف مبيعات لعرض الرسم البياني.' : 'No sales recorded yet. Add sales to see the chart.'}
+                </div>
+              )}
+            </div>
+
+            {/* Quick stats insights panel */}
+            <div className="space-y-4 bg-slate-50 dark:bg-slate-900/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800/60 flex flex-col justify-center">
+              <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest block">{isAr ? 'ذكاء لوحة المبيعات' : 'Sales intelligence'}</span>
+              
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 block">{isAr ? 'أعلى قمة مبيعات' : 'Highest daily peak'}</span>
+                <span className="text-sm font-black font-mono text-emerald-600 dark:text-emerald-400 block mt-0.5">{formatCurrency(peakSales.total)}</span>
+                <span className="text-[9px] text-slate-500 block font-bold">{isAr ? `في تاريخ ${peakSales.date}` : `on date ${peakSales.date}`}</span>
               </div>
-            )}
+              
+              <div className="border-t border-slate-200/60 dark:border-slate-800 pt-3">
+                <span className="text-[10px] font-bold text-slate-400 block">{isAr ? 'متوسط المبيعات اليومية' : 'Daily sales average'}</span>
+                <span className="text-sm font-black font-mono text-blue-600 dark:text-sky-400 block mt-0.5">{formatCurrency(avgSales)}</span>
+              </div>
+
+              <div className="border-t border-slate-200/60 dark:border-slate-800 pt-3">
+                <span className="text-[10px] font-bold text-slate-400 block">{isAr ? 'انحراف تكلفة الأغذية' : 'Food Cost deviation'}</span>
+                <span className="text-xs font-black text-slate-800 dark:text-slate-200 block mt-0.5">
+                  {formatPercent(foodCostPercent)}
+                </span>
+                <span className={`text-[8.5px] font-bold px-1.5 py-0.5 rounded mt-1 inline-block ${foodCostPercent <= 30 ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'}`}>
+                  {foodCostPercent <= 30 ? (isAr ? 'نطاق آمن ومربح' : 'Profitable range') : (isAr ? 'يتطلب مراجعة' : 'Needs audit')}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
 
