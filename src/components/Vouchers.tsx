@@ -34,7 +34,7 @@ export default function VouchersModule({
   const [vDate, setVDate] = useState(new Date().toISOString().split('T')[0]);
 
   const formatCurrency = (val: number) =>
-    new Intl.NumberFormat(isAr ? 'ar-EG' : 'en-US', { style: 'currency', currency: 'EGP', maximumFractionDigits: 2 }).format(val);
+    new Intl.NumberFormat(isAr ? 'ar-EG-u-nu-latn' : 'en-US', { style: 'currency', currency: 'EGP', maximumFractionDigits: 2 }).format(val);
 
   const getPartyDisplayName = (v: Voucher) => {
     if (v.partyName) return v.partyName;

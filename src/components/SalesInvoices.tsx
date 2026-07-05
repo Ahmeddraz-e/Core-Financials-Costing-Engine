@@ -40,7 +40,7 @@ export default function SalesInvoicesModule({
   const TAX_RATE = 0.14;
 
   const formatCurrency = (val: number) =>
-    new Intl.NumberFormat(isAr ? 'ar-EG' : 'en-US', { style: 'currency', currency: 'EGP', maximumFractionDigits: 2 }).format(val);
+    new Intl.NumberFormat(isAr ? 'ar-EG-u-nu-latn' : 'en-US', { style: 'currency', currency: 'EGP', maximumFractionDigits: 2 }).format(val);
 
   const getCustomerName = (id: string) => {
     const c = data.customers.find(c => c.id === id);

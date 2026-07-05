@@ -277,7 +277,7 @@ export function printDocument(htmlContent: string, title: string): void {
 
 /** Format currency with EGP */
 export function fmtCurrency(val: number, lang: 'ar' | 'en' = 'ar'): string {
-  return new Intl.NumberFormat(lang === 'ar' ? 'ar-EG' : 'en-US', {
+  return new Intl.NumberFormat(lang === 'ar' ? 'ar-EG-u-nu-latn' : 'en-US', {
     style: 'currency',
     currency: 'EGP',
     maximumFractionDigits: 2
@@ -288,7 +288,7 @@ export function fmtCurrency(val: number, lang: 'ar' | 'en' = 'ar'): string {
 export function fmtDate(dateStr: string, lang: 'ar' | 'en' = 'ar'): string {
   if (!dateStr) return '';
   try {
-    return new Date(dateStr).toLocaleDateString(lang === 'ar' ? 'ar-EG' : 'en-US', {
+    return new Date(dateStr).toLocaleDateString(lang === 'ar' ? 'ar-EG-u-nu-latn' : 'en-US', {
       year: 'numeric', month: 'long', day: 'numeric'
     });
   } catch {
@@ -379,7 +379,7 @@ export function signaturesHTML(labels: string[]): string {
 export function footerHTML(): string {
   return `
     <div class="print-footer">
-      تم الإنشاء بواسطة نظام LODing ERP — ${new Date().toLocaleDateString('ar-EG')} — هذا المستند صادر آلياً ولا يحتاج توقيع إلا في حال الاعتماد اليدوي
+      تم الإنشاء بواسطة نظام LODing ERP — ${new Date().toLocaleDateString('ar-EG-u-nu-latn')} — هذا المستند صادر آلياً ولا يحتاج توقيع إلا في حال الاعتماد اليدوي
     </div>
   `;
 }

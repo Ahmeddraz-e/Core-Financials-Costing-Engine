@@ -107,7 +107,7 @@ export default function TreasuryModule({
 
   // Helper formatting functions
   const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat(isAr ? 'ar-EG' : 'en-US', { style: 'currency', currency: 'EGP', maximumFractionDigits: 2 }).format(val);
+    return new Intl.NumberFormat(isAr ? 'ar-EG-u-nu-latn' : 'en-US', { style: 'currency', currency: 'EGP', maximumFractionDigits: 2 }).format(val);
   };
 
   // Find linked accounts or default
@@ -990,7 +990,7 @@ export default function TreasuryModule({
         <div class="doc-title" style="background:#f8fafc; border-color:#e2e8f0;">
           <h2>${title}</h2>
           <div style="font-size:10px; color:#64748b; margin-top:4px;">
-            ${isAr ? `تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG')}` : `Printed on: ${new Date().toLocaleDateString()}`}
+            ${isAr ? `تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG-u-nu-latn')}` : `Printed on: ${new Date().toLocaleDateString()}`}
           </div>
         </div>
 
