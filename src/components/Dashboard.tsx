@@ -150,9 +150,22 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
       existing.foodCost += s.foodCost;
       map.set(s.date, existing);
     }
-    return Array.from(map.entries())
+    const sorted = Array.from(map.entries())
       .map(([date, v]) => ({ date: date.slice(5), fullDate: date, total: v.total, foodCost: v.foodCost }))
       .sort((a, b) => a.fullDate.localeCompare(b.fullDate));
+      
+    // If there is only one data point, pad a preceding day with 0 sales to make the line/area chart connect beautifully!
+    if (sorted.length === 1) {
+      const singlePoint = sorted[0];
+      const d = new Date(singlePoint.fullDate);
+      d.setDate(d.getDate() - 1);
+      const prevDateStr = d.toISOString().split('T')[0];
+      return [
+        { date: prevDateStr.slice(5), fullDate: prevDateStr, total: 0, foodCost: 0 },
+        singlePoint
+      ];
+    }
+    return sorted;
   }, [data.sales]);
 
   const peakSales = useMemo(() => {
@@ -161,8 +174,9 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
   }, [dailySalesData]);
 
   const avgSales = useMemo(() => {
-    if (dailySalesData.length === 0) return 0;
-    return dailySalesData.reduce((sum, d) => sum + d.total, 0) / dailySalesData.length;
+    const activeDays = dailySalesData.filter(d => d.total > 0);
+    if (activeDays.length === 0) return 0;
+    return activeDays.reduce((sum, d) => sum + d.total, 0) / activeDays.length;
   }, [dailySalesData]);
 
   const [salesChartType, setSalesChartType] = useState<'AREA' | 'BAR' | 'LINE'>('AREA');
