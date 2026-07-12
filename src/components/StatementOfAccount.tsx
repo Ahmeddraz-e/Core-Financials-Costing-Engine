@@ -36,6 +36,26 @@ export default function StatementOfAccount({ data, lang }: StatementOfAccountPro
     let rawTx: Omit<TransactionLine, 'balanceAfter'>[] = [];
 
     if (partyType === 'CUSTOMER') {
+      // 0. POS Sales (Debit to customer) - customerId stored in description JSON
+      (data.sales || []).forEach(sale => {
+        try {
+          const metaMatch = sale.description?.match(/\[({.*})\]/);
+          if (metaMatch) {
+            const meta = JSON.parse(metaMatch[1]);
+            if (meta.customer === partyId) {
+              rawTx.push({
+                date: sale.date,
+                type: 'INVOICE',
+                description: isAr ? 'مبيعات كاشير (POS)' : 'POS Sale',
+                reference: sale.orderNumber,
+                debit: sale.totalAmount,
+                credit: 0
+              });
+            }
+          }
+        } catch (e) {}
+      });
+
       // 1. Sales Invoices (Debit to customer)
       (data.salesInvoices || []).filter(i => i.customerId === partyId).forEach(inv => {
         rawTx.push({
@@ -134,8 +154,12 @@ export default function StatementOfAccount({ data, lang }: StatementOfAccountPro
       });
     }
 
-    // Sort chronologically
-    rawTx.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    // Sort by date ascending, then by reference for same-date entries
+    rawTx.sort((a, b) => {
+      const dateDiff = new Date(a.date).getTime() - new Date(b.date).getTime();
+      if (dateDiff !== 0) return dateDiff;
+      return a.reference.localeCompare(b.reference, undefined, { numeric: true });
+    });
 
     // Filter by date range and calculate rolling balance
     let runningBalance = 0;
@@ -184,90 +208,61 @@ export default function StatementOfAccount({ data, lang }: StatementOfAccountPro
 
   const statement = useMemo(() => generateStatement(), [partyType, partyId, startDate, endDate, data]);
 
+  // Compute actual balances from all transactions (not relying on stored balance field)
+  const partyBalances = useMemo(() => {
+    const balances: Record<string, number> = {};
+    (parties || []).forEach(p => { balances[p.id] = 0; });
+
+    if (partyType === 'CUSTOMER') {
+      (data.salesInvoices || []).forEach(inv => {
+        if (balances[inv.customerId] !== undefined) balances[inv.customerId] += inv.totalAmount;
+      });
+      (data.sales || []).forEach(sale => {
+        try {
+          const metaMatch = sale.description?.match(/\[({.*})\]/);
+          if (metaMatch) {
+            const meta = JSON.parse(metaMatch[1]);
+            if (balances[meta.customer] !== undefined) balances[meta.customer] += sale.totalAmount;
+          }
+        } catch (e) {}
+      });
+      (data.vouchers || []).forEach(v => {
+        if (v.partyType === 'CUSTOMER' && balances[v.partyId] !== undefined) {
+          if (v.type === VoucherType.Receipt) balances[v.partyId] -= v.amount;
+          if (v.type === VoucherType.Payment) balances[v.partyId] += v.amount;
+        }
+      });
+      (data.salesReturns || []).forEach(sr => {
+        if (balances[sr.customerId] !== undefined) balances[sr.customerId] -= sr.totalAmount;
+      });
+    } else {
+      (data.purchases || []).forEach(p => {
+        if (balances[p.supplierId] !== undefined && (p.status === 'INVOICED' || p.status === 'PAID')) {
+          balances[p.supplierId] += p.totalAmount;
+        }
+      });
+      (data.vouchers || []).forEach(v => {
+        if (v.partyType === 'SUPPLIER' && balances[v.partyId] !== undefined && v.type === VoucherType.Payment) {
+          balances[v.partyId] -= v.amount;
+        }
+      });
+      (data.moneyTransactions || []).forEach(mt => {
+        if (mt.type === 'PAYMENT' && mt.destType === 'SUPPLIER' && balances[mt.destId] !== undefined) {
+          balances[mt.destId] -= mt.amount;
+        }
+      });
+      (data.purchaseReturns || []).forEach(pr => {
+        if (balances[pr.supplierId] !== undefined) balances[pr.supplierId] -= pr.totalAmount;
+      });
+    }
+    return balances;
+  }, [partyType, data, parties]);
+
   const selectedParty = parties.find(p => p.id === partyId);
   const partyNameStr = selectedParty ? (isAr ? selectedParty.nameAr : selectedParty.nameEn) : '';
-  const currentBalance = selectedParty ? selectedParty.balance : 0;
+  const currentBalance = selectedParty ? (partyBalances[selectedParty.id] ?? selectedParty.balance) : 0;
 
-  const handlePrint = () => {
-    if (!selectedParty || statement.length === 0) return;
 
-    const rowsHTML = statement.map(tx => `
-      <tr>
-        <td style="white-space:nowrap">${fmtDate(tx.date, lang)}</td>
-        <td>${tx.reference}</td>
-        <td>${tx.description}</td>
-        <td style="text-align:left; color:#ef4444">${tx.debit > 0 ? fmtCurrency(tx.debit, lang) : '-'}</td>
-        <td style="text-align:left; color:#22c55e">${tx.credit > 0 ? fmtCurrency(tx.credit, lang) : '-'}</td>
-        <td style="text-align:left; font-weight:800; background:#f8fafc">${fmtCurrency(tx.balanceAfter, lang)}</td>
-      </tr>
-    `).join('');
-
-    const totalDebit = statement.reduce((sum, tx) => sum + tx.debit, 0);
-    const totalCredit = statement.reduce((sum, tx) => sum + tx.credit, 0);
-    
-    // Balance indicators
-    const isCustomer = partyType === 'CUSTOMER';
-    const isDebtor = currentBalance > 0;
-    const balanceStatusText = isDebtor ? (isAr ? 'مدين لنا (عليه)' : 'Debtor (Owes us)') : (currentBalance < 0 ? (isAr ? 'دائن لنا (له)' : 'Creditor (We owe)') : (isAr ? 'رصيد صفري' : 'Zero Balance'));
-
-    const html = `
-      <div class="print-page">
-        ${companyHeaderHTML()}
-        <div class="doc-title">
-          <h2>${isAr ? 'كشف حساب تفصيلي' : 'Detailed Statement of Account'}</h2>
-          <div class="doc-number">${partyType === 'CUSTOMER' ? (isAr ? 'العميل' : 'Customer') : (isAr ? 'المورد' : 'Supplier')}: ${partyNameStr}</div>
-        </div>
-
-        <div class="info-grid">
-          <div class="info-box"><div class="label">${isAr ? 'الفترة من' : 'Period From'}</div><div class="value">${startDate ? fmtDate(startDate, lang) : '-'}</div></div>
-          <div class="info-box"><div class="label">${isAr ? 'الفترة إلى' : 'Period To'}</div><div class="value">${endDate ? fmtDate(endDate, lang) : '-'}</div></div>
-          <div class="info-box"><div class="label">${isAr ? 'تاريخ الطباعة' : 'Print Date'}</div><div class="value">${fmtDate(new Date().toISOString(), lang)}</div></div>
-          <div class="info-box"><div class="label">${isAr ? 'حالة الرصيد' : 'Balance Status'}</div><div class="value" style="color:${isDebtor ? '#ef4444' : '#22c55e'}">${balanceStatusText}</div></div>
-        </div>
-
-        <div class="balance-summary">
-          <div class="balance-card debit">
-            <div class="card-label">${isAr ? 'إجمالي المدين' : 'Total Debit'}</div>
-            <div class="amount text-red-600">${fmtCurrency(totalDebit, lang)}</div>
-          </div>
-          <div class="balance-card credit">
-            <div class="card-label">${isAr ? 'إجمالي الدائن' : 'Total Credit'}</div>
-            <div class="amount text-green-600">${fmtCurrency(totalCredit, lang)}</div>
-          </div>
-          <div class="balance-card net">
-            <div class="card-label">${isAr ? 'الرصيد الختامي' : 'Closing Balance'}</div>
-            <div class="amount text-blue-600">${fmtCurrency(currentBalance, lang)}</div>
-          </div>
-        </div>
-
-        <table>
-          <thead>
-            <tr>
-              <th style="width:15%">${isAr ? 'التاريخ' : 'Date'}</th>
-              <th style="width:15%">${isAr ? 'رقم المرجع' : 'Ref #'}</th>
-              <th style="width:30%">${isAr ? 'البيان' : 'Description'}</th>
-              <th style="width:13%">${isAr ? 'مدين' : 'Debit'}</th>
-              <th style="width:13%">${isAr ? 'دائن' : 'Credit'}</th>
-              <th style="width:14%">${isAr ? 'الرصيد' : 'Balance'}</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rowsHTML}
-          </tbody>
-        </table>
-
-        ${signaturesHTML([
-          isAr ? 'أعد بواسطة' : 'Prepared By',
-          isAr ? 'المراجع' : 'Audited By',
-          isAr ? 'اعتماد الإدارة' : 'Approved By'
-        ])}
-
-        ${footerHTML()}
-      </div>
-    `;
-
-    printDocument(html, `${isAr ? 'كشف حساب' : 'Statement'} - ${partyNameStr}`);
-  };
 
   const handleExport = () => {
     if (statement.length === 0) return;
@@ -296,12 +291,9 @@ export default function StatementOfAccount({ data, lang }: StatementOfAccountPro
         </div>
         {statement.length > 0 && (
           <div className="flex items-center gap-2">
-            <button onClick={handleExport} className="px-3 py-2 text-xs font-bold rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 flex items-center gap-1">
-              <Download className="h-3.5 w-3.5" /> Excel
-            </button>
-            <button onClick={handlePrint} className="px-4 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700 flex items-center gap-1.5 shadow-lg">
-              <Printer className="h-3.5 w-3.5" />
-              {isAr ? 'طباعة الكشف' : 'Print Statement'}
+            <button onClick={handleExport} className="px-4 py-2 text-xs font-bold rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white flex items-center gap-1.5 shadow-lg cursor-pointer">
+              <FileSpreadsheet className="h-4 w-4" />
+              {isAr ? 'تصدير كشف الحساب إلى Excel' : 'Export Statement to Excel'}
             </button>
           </div>
         )}
@@ -343,6 +335,51 @@ export default function StatementOfAccount({ data, lang }: StatementOfAccountPro
         </div>
       </div>
 
+      {/* Summary of all parties with balances when none selected */}
+      {!partyId && (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
+          <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20">
+            <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+              <Calculator className="h-4 w-4 text-slate-400" />
+              {isAr ? 'أرصدة جميع ' + (partyType === 'CUSTOMER' ? 'العملاء' : 'الموردين') : 'All ' + (partyType === 'CUSTOMER' ? 'Customers' : 'Suppliers') + ' Balances'}
+            </h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-800/50">
+                  <th className="text-right px-4 py-3 font-bold text-slate-500">{isAr ? 'الاسم' : 'Name'}</th>
+                  <th className="text-right px-4 py-3 font-bold text-slate-500">{isAr ? 'رقم الهاتف' : 'Phone'}</th>
+                  <th className="text-left px-4 py-3 font-bold text-slate-500">{isAr ? 'الرصيد الحالي' : 'Current Balance'}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {parties.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="p-8 text-center text-slate-400 font-bold">
+                      {isAr ? 'لا توجد جهات مسجلة' : 'No parties registered'}
+                    </td>
+                  </tr>
+                ) : (
+                  parties.map((p, idx) => {
+                    const bal = partyBalances[p.id] ?? p.balance;
+                    return (
+                    <tr key={p.id} className="border-b border-slate-100 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/30 cursor-pointer" onClick={() => setPartyId(p.id)}>
+                      <td className="px-4 py-2.5 font-bold text-slate-800 dark:text-slate-200">{isAr ? (p as any).nameAr : (p as any).nameEn}</td>
+                      <td className="px-4 py-2.5 font-bold text-slate-500">{(p as any).phone || '-'}</td>
+                      <td className="px-4 py-2.5 font-black text-left text-slate-900 dark:text-white">
+                        {fmtCurrency(bal, lang)}
+                      </td>
+                    </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {partyId && (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm">
           <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20 flex flex-col sm:flex-row justify-between items-center">
@@ -351,7 +388,7 @@ export default function StatementOfAccount({ data, lang }: StatementOfAccountPro
                 <User className="h-5 w-5 text-slate-400" />
                 {partyNameStr}
               </h3>
-              <p className="text-xs font-bold text-slate-500 mt-0.5">{isAr ? 'الرصيد الحالي:' : 'Current Balance:'} <span className={currentBalance > 0 ? 'text-red-500' : currentBalance < 0 ? 'text-emerald-500' : ''}>{fmtCurrency(currentBalance, lang)}</span></p>
+              <p className="text-xs font-bold text-slate-500 mt-0.5">{isAr ? 'الرصيد الحالي:' : 'Current Balance:'} <span className="text-slate-900 dark:text-white">{fmtCurrency(currentBalance, lang)}</span></p>
             </div>
             <div className="flex gap-4 mt-4 sm:mt-0 text-sm font-bold">
               <div className="text-center">
@@ -382,13 +419,13 @@ export default function StatementOfAccount({ data, lang }: StatementOfAccountPro
                   </tr>
                 ) : (
                   statement.map((tx, idx) => (
-                    <tr key={idx} className={`border-b border-slate-100 dark:border-slate-800/50 ${tx.type === 'OPENING' ? 'bg-amber-50/50 dark:bg-amber-900/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/30'}`}>
+                    <tr key={`tx-${idx}`} className={`border-b border-slate-100 dark:border-slate-800/50 ${tx.type === 'OPENING' ? 'bg-amber-50/50 dark:bg-amber-900/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/30'}`}>
                       <td className="px-4 py-2.5 font-bold text-slate-600 dark:text-slate-400 whitespace-nowrap">{tx.date}</td>
                       <td className="px-4 py-2.5 font-bold text-slate-500">{tx.reference}</td>
                       <td className="px-4 py-2.5 font-bold text-slate-800 dark:text-slate-200">{tx.description}</td>
-                      <td className="px-4 py-2.5 font-black text-red-500 text-left">{tx.debit > 0 ? fmtCurrency(tx.debit, lang) : '-'}</td>
-                      <td className="px-4 py-2.5 font-black text-emerald-500 text-left">{tx.credit > 0 ? fmtCurrency(tx.credit, lang) : '-'}</td>
-                      <td className={`px-4 py-2.5 font-black text-left bg-slate-50 dark:bg-slate-800/40 ${tx.balanceAfter > 0 ? 'text-red-600' : tx.balanceAfter < 0 ? 'text-emerald-600' : 'text-slate-500'}`}>
+                      <td className="px-4 py-2.5 font-black text-slate-900 dark:text-white text-left">{tx.debit > 0 ? fmtCurrency(tx.debit, lang) : '-'}</td>
+                      <td className="px-4 py-2.5 font-black text-slate-900 dark:text-white text-left">{tx.credit > 0 ? fmtCurrency(tx.credit, lang) : '-'}</td>
+                      <td className="px-4 py-2.5 font-black text-left bg-slate-50 dark:bg-slate-800/40 text-slate-900 dark:text-white">
                         {fmtCurrency(tx.balanceAfter, lang)}
                       </td>
                     </tr>

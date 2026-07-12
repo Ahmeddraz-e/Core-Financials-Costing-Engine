@@ -22,6 +22,13 @@ export function initDatabase(dbPath: string): Database.Database {
     // Column already exists or table doesn't exist yet, ignore
   }
 
+  // Migration safety: ensure itemsJson column exists in journal_lines table
+  try {
+    db.prepare('ALTER TABLE journal_lines ADD COLUMN itemsJson TEXT').run();
+  } catch (err) {
+    // Column already exists or table doesn't exist yet, ignore
+  }
+
   // Migration safety: ensure branch, responsible, accountId columns exist in treasuries
   try {
     db.prepare('ALTER TABLE treasuries ADD COLUMN branch TEXT').run();
@@ -47,6 +54,37 @@ export function initDatabase(dbPath: string): Database.Database {
   // Migration safety: ensure chequeImage column exists in vouchers
   try {
     db.prepare('ALTER TABLE vouchers ADD COLUMN chequeImage TEXT DEFAULT \'\'').run();
+  } catch (err) {}
+
+  // Migration safety: ensure new employee fields exist
+  try { db.prepare('ALTER TABLE employees ADD COLUMN nationalId TEXT DEFAULT \'\'').run(); } catch (e) {}
+  try { db.prepare('ALTER TABLE employees ADD COLUMN department TEXT DEFAULT \'\'').run(); } catch (e) {}
+  try { db.prepare('ALTER TABLE employees ADD COLUMN email TEXT DEFAULT \'\'').run(); } catch (e) {}
+  try { db.prepare('ALTER TABLE employees ADD COLUMN phone TEXT DEFAULT \'\'').run(); } catch (e) {}
+  try { db.prepare('ALTER TABLE employees ADD COLUMN hireDate TEXT DEFAULT \'\'').run(); } catch (e) {}
+  try { db.prepare('ALTER TABLE employees ADD COLUMN contractType TEXT DEFAULT \'\'').run(); } catch (e) {}
+  try { db.prepare('ALTER TABLE employees ADD COLUMN manager TEXT DEFAULT \'\'').run(); } catch (e) {}
+  try { db.prepare('ALTER TABLE employees ADD COLUMN status TEXT DEFAULT \'ACTIVE\'').run(); } catch (e) {}
+  try { db.prepare('ALTER TABLE employees ADD COLUMN timelineJson TEXT DEFAULT \'[]\'').run(); } catch (e) {}
+  try { db.prepare('ALTER TABLE employees ADD COLUMN contractStartDate TEXT DEFAULT \'\'').run(); } catch (e) {}
+  try { db.prepare('ALTER TABLE employees ADD COLUMN contractEndDate TEXT DEFAULT \'\'').run(); } catch (e) {}
+  try { db.prepare('ALTER TABLE employees ADD COLUMN workingHours REAL DEFAULT 0').run(); } catch (e) {}
+
+  // Migration safety: ensure version and isActive exist in recipes table
+  try { db.prepare('ALTER TABLE recipes ADD COLUMN version INTEGER NOT NULL DEFAULT 1').run(); } catch (e) {}
+  try { db.prepare('ALTER TABLE recipes ADD COLUMN isActive INTEGER NOT NULL DEFAULT 1').run(); } catch (e) {}
+
+  // Migration safety: ensure customPath exists in backup_schedule table
+  try { db.prepare('ALTER TABLE backup_schedule ADD COLUMN customPath TEXT DEFAULT \'\'').run(); } catch (e) {}
+
+  // Migration safety: ensure Sales Discount account exists
+  try {
+    const exists = db.prepare("SELECT 1 FROM accounts WHERE code = '4108001'").get();
+    if (!exists) {
+      db.prepare(
+        "INSERT INTO accounts (id, code, nameAr, nameEn, type, balance, isSystem) VALUES ('406', '4108001', 'خصم المبيعات والمسموحات', 'Sales Discounts & Allowances', 'REVENUE', 0, 1)"
+      ).run();
+    }
   } catch (err) {}
 
   seedDatabase(db);
@@ -192,7 +230,7 @@ function syncJournalEntries(db: Database.Database, incomingEntries: any[]): void
   // 2. Insert or update existing entries
   const insertJE = db.prepare('INSERT OR REPLACE INTO journal_entries (id, entryNumber, date, type, description, approved, approvedBy) VALUES (?, ?, ?, ?, ?, ?, ?)');
   const deleteLines = db.prepare('DELETE FROM journal_lines WHERE entryId = ?');
-  const insertJL = db.prepare('INSERT INTO journal_lines (id, entryId, accountId, debit, credit) VALUES (?, ?, ?, ?, ?)');
+  const insertJL = db.prepare('INSERT INTO journal_lines (id, entryId, accountId, debit, credit, itemsJson) VALUES (?, ?, ?, ?, ?, ?)');
 
   for (const je of incomingEntries) {
     // Write entry header
@@ -202,7 +240,14 @@ function syncJournalEntries(db: Database.Database, incomingEntries: any[]): void
     deleteLines.run(je.id);
     if (je.lines && Array.isArray(je.lines)) {
       je.lines.forEach((l: any, idx: number) => {
-        insertJL.run(`${je.id}-line-${idx}`, je.id, l.accountId, l.debit, l.credit);
+        insertJL.run(
+          `${je.id}-line-${idx}`,
+          je.id,
+          l.accountId,
+          l.debit,
+          l.credit,
+          l.items && l.items.length > 0 ? JSON.stringify(l.items) : null
+        );
       });
     }
   }
@@ -224,13 +269,13 @@ function syncRecipes(db: Database.Database, incomingRecipes: any[]): void {
   }
 
   // 2. Insert or update existing recipes
-  const insertRecipe = db.prepare('INSERT OR REPLACE INTO recipes (id, itemId, yieldAmount, laborCost, packagingCost, otherOperatingCost, calculatedCost, sellingPrice, marginPercent, foodCostPercent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const insertRecipe = db.prepare('INSERT OR REPLACE INTO recipes (id, itemId, version, isActive, yieldAmount, laborCost, packagingCost, otherOperatingCost, calculatedCost, sellingPrice, marginPercent, foodCostPercent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const deleteComponents = db.prepare('DELETE FROM recipe_components WHERE recipeId = ?');
   const insertRC = db.prepare('INSERT INTO recipe_components (id, recipeId, componentItemId, quantity, lossPercent) VALUES (?, ?, ?, ?, ?)');
 
   for (const r of incomingRecipes) {
     // Write recipe header
-    insertRecipe.run(r.id, r.itemId, r.yieldAmount, r.laborCost, r.packagingCost, r.otherOperatingCost, r.calculatedCost, r.sellingPrice, r.marginPercent, r.foodCostPercent);
+    insertRecipe.run(r.id, r.itemId, r.version || 1, r.isActive !== false ? 1 : 0, r.yieldAmount, r.laborCost, r.packagingCost, r.otherOperatingCost, r.calculatedCost, r.sellingPrice, r.marginPercent, r.foodCostPercent);
 
     // Re-insert child components
     deleteComponents.run(r.id);
@@ -288,8 +333,11 @@ export function saveERPDataDiff(db: Database.Database, data: ERPData): void {
     syncTable(db, 'treasuries', data.treasuries, 'id', ['nameAr', 'nameEn', 'balance', 'branch', 'responsible', 'accountId']);
     syncTable(db, 'bank_accounts', data.bankAccounts, 'id', ['accountNumber', 'bankNameAr', 'bankNameEn', 'balance', 'branch', 'responsible', 'accountId']);
 
-    // 7.5 Sync checkbooks
-    const checkbooksWithJson = (data.checkbooks || []).map((c: any) => ({
+    // 7.5 Sync checkbooks — filter out ones linked to deleted banks
+    const bankIds = new Set(data.bankAccounts.map(b => b.id));
+    const checkbooksWithJson = (data.checkbooks || [])
+      .filter(c => bankIds.has(c.bankAccountId))
+      .map((c: any) => ({
       ...c,
       checksJson: JSON.stringify(c.checks || [])
     }));
@@ -310,8 +358,30 @@ export function saveERPDataDiff(db: Database.Database, data: ERPData): void {
       'code', 'nameAr', 'nameEn', 'purchaseDate', 'purchaseValue', 'salvageValue', 'usefulLifeYears', 'accumulatedDepreciation', 'currentBookValue'
     ]);
     syncTable(db, 'employees', data.employees, 'id', [
-      'code', 'nameAr', 'nameEn', 'role', 'salary', 'shift', 'loanBalance', 'active', 'allowances', 'deductions', 'overtimeHours', 'workingDays'
+      'code', 'nameAr', 'nameEn', 'role', 'salary', 'shift', 'loanBalance', 'active', 'allowances', 'deductions', 'overtimeHours', 'workingDays', 'workingHours',
+      'nationalId', 'department', 'email', 'phone', 'hireDate', 'contractType', 'manager', 'status', 'timelineJson',
+      'contractStartDate', 'contractEndDate'
     ]);
+
+    // 9.5 Sync HR custom JSON collections into app_state
+    const hrCollections = [
+      { key: 'hr_leaves', val: data.hrLeaves },
+      { key: 'hr_candidates', val: data.hrCandidates },
+      { key: 'hr_departments', val: data.hrDepartments },
+      { key: 'hr_jobs', val: data.hrJobs },
+      { key: 'hr_appraisals', val: data.hrAppraisals },
+      { key: 'hr_loans', val: data.hrLoans },
+      { key: 'hr_documents', val: data.hrDocuments },
+      { key: 'hr_trainings', val: data.hrTrainings },
+      { key: 'hr_attendance', val: data.hrAttendance },
+      { key: 'hr_events', val: data.hrEvents }
+    ];
+    for (const hc of hrCollections) {
+      if (hc.val) {
+        db.prepare("INSERT OR REPLACE INTO app_state (key, value) VALUES (?, ?)")
+          .run(hc.key, JSON.stringify(hc.val));
+      }
+    }
 
     // 10. Sync budgets, suppliers, customers
     syncTable(db, 'budgets', data.budgets, 'id', [
@@ -380,9 +450,17 @@ export function saveERPDataDiff(db: Database.Database, data: ERPData): void {
     const bs = data.backupSchedule;
     if (bs) {
       db.prepare(`
-        INSERT OR REPLACE INTO backup_schedule (id, frequency, time, target, enabled)
-        VALUES (1, ?, ?, ?, ?)
-      `).run(bs.frequency, bs.time, bs.target, bs.enabled ? 1 : 0);
+        INSERT OR REPLACE INTO backup_schedule (id, frequency, time, target, enabled, customPath)
+        VALUES (1, ?, ?, ?, ?, ?)
+      `).run(bs.frequency, bs.time, bs.target, bs.enabled ? 1 : 0, bs.customPath || '');
+      console.log(`[DB] Saved backup schedule: customPath="${bs.customPath}"`);
+    }
+
+    // 19. Sync Company Profile
+    const cp = (data as any).companyProfile;
+    if (cp) {
+      db.prepare("INSERT OR REPLACE INTO app_state (key, value) VALUES ('company_profile', ?)")
+        .run(JSON.stringify(cp));
     }
   });
   tx();

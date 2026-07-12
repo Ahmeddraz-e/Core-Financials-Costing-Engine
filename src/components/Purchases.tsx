@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { ShoppingBag, Plus, Search, ChevronRight, FileCheck, Check, Truck, CreditCard, Users2, Save, Trash2, ShieldAlert } from 'lucide-react';
-import { ERPData, PurchaseTransaction, PurchaseStatus, Supplier, InventoryItem, ItemCategory } from '../types';
+import { ShoppingBag, Plus, Search, ChevronRight, FileCheck, Check, Truck, CreditCard, Users2, Save, Trash2, ShieldAlert, X, FileText } from 'lucide-react';
+import { ERPData, PurchaseTransaction, PurchaseStatus, Supplier, InventoryItem, ItemCategory, TreasuryTransType } from '../types';
+import { exportPurchaseTransactionsExcel, exportSuppliersExcel } from '../utils/excelExport';
 
 interface PurchasesProps {
   data: ERPData;
@@ -11,6 +12,7 @@ interface PurchasesProps {
   onUpdateAccounts: (accounts: any) => void;
   onAddMoneyTransaction: (tx: any) => void;
   onAddAuditLog: (actionAr: string, actionEn: string, details: string) => void;
+  onUpdateERPState?: (updater: (prev: ERPData) => ERPData) => void;
 }
 
 export default function Purchases({ 
@@ -21,12 +23,188 @@ export default function Purchases({
   onUpdateSuppliers,
   onUpdateAccounts,
   onAddMoneyTransaction,
-  onAddAuditLog
+  onAddAuditLog,
+  onUpdateERPState
 }: PurchasesProps) {
   const isAr = lang === 'ar';
   const [activeSubTab, setActiveSubTab] = useState<'transactions' | 'suppliers'>('transactions');
   const [showAddPRForm, setShowAddPRForm] = useState(false);
   const [showAddSupplierForm, setShowAddSupplierForm] = useState(false);
+
+  // Custom alert & confirmation modal states
+  const [alertModal, setAlertModal] = useState<{ show: boolean; title: string; message: string; type?: 'info' | 'success' | 'warning' | 'error' }>({ show: false, title: '', message: '', type: 'info' });
+  const [confirmModal, setConfirmModal] = useState<{ show: boolean; title: string; message: string; onConfirm: () => void }>({ show: false, title: '', message: '', onConfirm: () => {} });
+
+  const [paymentModalTx, setPaymentModalTx] = useState<PurchaseTransaction | null>(null);
+  const [paymentSourceId, setPaymentSourceId] = useState(data.treasuries[0]?.id || data.bankAccounts[0]?.id || '');
+
+  const handleConfirmProcessPayment = () => {
+    if (!paymentModalTx || !paymentSourceId) return;
+
+    const tx = paymentModalTx;
+    const isBank = data.bankAccounts.some(b => b.id === paymentSourceId);
+    const selectedTreasury = data.treasuries.find(t => t.id === paymentSourceId);
+    const selectedBank = data.bankAccounts.find(b => b.id === paymentSourceId);
+
+    const sourceName = selectedTreasury 
+      ? (isAr ? selectedTreasury.nameAr : selectedTreasury.nameEn)
+      : selectedBank 
+        ? (isAr ? selectedBank.bankNameAr : selectedBank.bankNameEn)
+        : '';
+
+    const sourceBalance = selectedTreasury ? selectedTreasury.balance : (selectedBank ? selectedBank.balance : 0);
+    const targetAccountId = selectedTreasury ? selectedTreasury.accountId : (selectedBank ? selectedBank.accountId : '');
+
+    if (sourceBalance < tx.totalAmount) {
+      showAlert(
+        isAr ? 'رصيد غير كافٍ' : 'Insufficient Funds',
+        isAr 
+          ? `⚠️ رصيد المصدر المختار (${sourceName}) غير كافٍ! الرصيد الحالي: ${sourceBalance.toLocaleString()} ج.م، القيمة المطلوبة: ${tx.totalAmount.toLocaleString()} ج.م.` 
+          : `⚠️ Selected source (${sourceName}) has insufficient balance! Current: ${sourceBalance} EGP, Required: ${tx.totalAmount} EGP.`,
+        'error'
+      );
+      return;
+    }
+
+    const pvNumber = tx.number.replace('PI', 'PV');
+
+    // Deduct from Treasury or Bank
+    const updatedTreasuries = data.treasuries.map(t => {
+      if (t.id === paymentSourceId) {
+        return { ...t, balance: t.balance - tx.totalAmount };
+      }
+      return t;
+    });
+
+    const updatedBankAccounts = data.bankAccounts.map(b => {
+      if (b.id === paymentSourceId) {
+        return { ...b, balance: b.balance - tx.totalAmount };
+      }
+      return b;
+    });
+
+    // Clear supplier payable
+    const updatedSuppliers = data.suppliers.map(s => {
+      if (s.id === tx.supplierId) {
+        return { ...s, balance: Math.max(0, s.balance - tx.totalAmount) };
+      }
+      return s;
+    });
+
+    // Update GL Accounts
+    const updatedAccounts = data.accounts.map(acc => {
+      if (acc.id === targetAccountId) { // The selected Cashbox/Bank account
+        return { ...acc, balance: acc.balance - tx.totalAmount };
+      }
+      if (acc.code === '2101001') { // Accounts Payable
+        return { ...acc, balance: acc.balance - tx.totalAmount };
+      }
+      return acc;
+    });
+
+    const updatedPurchases = data.purchases.map(p => {
+      if (p.id === tx.id) {
+        return { ...p, number: pvNumber, status: PurchaseStatus.Paid };
+      }
+      return p;
+    });
+
+    // Money Transaction record
+    const moneyTx = {
+      id: 'mt-' + Math.random().toString(36).substring(2, 9),
+      number: pvNumber,
+      date: new Date().toISOString().split('T')[0],
+      type: TreasuryTransType.Payment,
+      amount: tx.totalAmount,
+      sourceType: (selectedTreasury ? 'CASHBOX' : 'BANK') as 'CASHBOX' | 'BANK',
+      sourceId: paymentSourceId,
+      destType: 'SUPPLIER',
+      destId: tx.supplierId,
+      description: isAr 
+        ? `سداد فاتورة المورد من ${sourceName} بقيمة ${tx.totalAmount} ج.م`
+        : `Settled supplier invoice from ${sourceName} for ${tx.totalAmount} EGP`
+    };
+
+    // Balanced payment journal entry
+    const paymentJV = {
+      id: 'je-pv-' + Math.random().toString(36).substring(2, 9),
+      entryNumber: `JV-${pvNumber}`,
+      date: new Date().toISOString().split('T')[0],
+      type: 'AUTO' as any,
+      description: isAr 
+        ? `سداد مديونية فاتورة المورد رقم ${tx.number} من حساب (${sourceName})`
+        : `Payment of supplier invoice ${tx.number} from account (${sourceName})`,
+      approved: true,
+      approvedBy: 'مدير المشتريات المالي',
+      lines: [
+        { accountId: '201', debit: tx.totalAmount, credit: 0 }, // Accounts Payable
+        { accountId: targetAccountId || '101', debit: 0, credit: tx.totalAmount } // selected source
+      ]
+    };
+
+    if (onUpdateERPState) {
+      onUpdateERPState(prev => ({
+        ...prev,
+        purchases: updatedPurchases,
+        suppliers: updatedSuppliers,
+        accounts: updatedAccounts,
+        treasuries: updatedTreasuries,
+        bankAccounts: updatedBankAccounts,
+        moneyTransactions: [moneyTx, ...(prev.moneyTransactions || [])],
+        journalEntries: [paymentJV, ...(prev.journalEntries || [])]
+      }));
+    } else {
+      onUpdatePurchases(updatedPurchases);
+      onUpdateSuppliers(updatedSuppliers);
+      onUpdateAccounts(updatedAccounts);
+      onAddMoneyTransaction(moneyTx);
+    }
+
+    onAddAuditLog(
+      `سداد فاتورة المورد: ${pvNumber}`,
+      `Settled Supplier Payable: ${pvNumber}`,
+      `تم صرف مبلغ ${tx.totalAmount} ج.م من (${sourceName}) لتسوية مديونية المورد.`
+    );
+
+    showAlert(
+      isAr ? 'تم السداد' : 'Payment Registered',
+      isAr 
+        ? `✅ تم سداد مبلغ ${tx.totalAmount.toLocaleString()} ج.م بنجاح من (${sourceName}).`
+        : `✅ Successfully paid ${tx.totalAmount.toLocaleString()} EGP from (${sourceName}).`,
+      'success'
+    );
+
+    setPaymentModalTx(null);
+  };
+
+  const showAlert = (title: string, message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
+    setAlertModal({ show: true, title, message, type });
+  };
+
+  const showConfirm = (title: string, message: string, onConfirm: () => void) => {
+    setConfirmModal({ show: true, title, message, onConfirm });
+  };
+
+  const handleDeleteSupplier = (id: string, name: string) => {
+    showConfirm(
+      isAr ? 'تأكيد حذف المورد' : 'Confirm Supplier Deletion',
+      isAr ? `هل أنت متأكد من حذف المورد "${name}" نهائياً من سجلات النظام؟` : `Are you sure you want to permanently delete supplier "${name}"?`,
+      () => {
+        const updated = data.suppliers.filter(s => s.id !== id);
+        onUpdateSuppliers(updated);
+        onAddAuditLog(
+          `حذف مورد: ${name}`,
+          `Deleted Supplier: ${name}`,
+          `تم حذف ملف المورد بالكامل من قاعدة البيانات.`
+        );
+        showAlert(
+          isAr ? 'تم الحذف' : 'Deleted',
+          isAr ? '👤 تم حذف المورد بنجاح!' : 'Supplier deleted successfully!',
+          'success'
+        );
+      }
+    );
+  };
 
   // New Supplier form state
   const [supNameAr, setSupNameAr] = useState('');
@@ -53,7 +231,7 @@ export default function Purchases({
   const getStatusBadge = (status: PurchaseStatus) => {
     switch (status) {
       case PurchaseStatus.Draft:
-        return { text: isAr ? 'مسودة' : 'Draft', classes: 'bg-slate-100 text-slate-700' };
+        return { text: isAr ? 'مسودة' : 'Draft', classes: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300' };
       case PurchaseStatus.Requested:
         return { text: isAr ? 'طلب قيد الاعتماد' : 'PR Pending Approval', classes: 'bg-blue-100 text-blue-700' };
       case PurchaseStatus.Approved:
@@ -66,8 +244,10 @@ export default function Purchases({
         return { text: isAr ? 'فاتورة مستحقة' : 'AP Invoiced', classes: 'bg-orange-100 text-orange-700' };
       case PurchaseStatus.Paid:
         return { text: isAr ? 'تم السداد بالكامل' : 'Paid & Settled', classes: 'bg-green-100 text-green-700' };
+      case PurchaseStatus.Returned:
+        return { text: isAr ? 'مرتجع' : 'Returned', classes: 'bg-red-100 text-red-700' };
       default:
-        return { text: status, classes: 'bg-slate-100 text-slate-700' };
+        return { text: status, classes: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300' };
     }
   };
 
@@ -105,8 +285,7 @@ export default function Purchases({
     if (!selectedSupplierId || !selectedItemId) return;
 
     const subtotal = orderQty * orderPrice;
-    const taxAmount = subtotal * 0.14; // 14% standard VAT in Egypt
-    const totalAmount = subtotal + taxAmount;
+    const totalAmount = subtotal;
 
     const prNumber = `PR-2026-${String(data.purchases.length + 1).padStart(3, '0')}`;
     const newTx: PurchaseTransaction = {
@@ -117,7 +296,7 @@ export default function Purchases({
       status: PurchaseStatus.Requested,
       items: [{ itemId: selectedItemId, quantity: orderQty, unitPrice: orderPrice, total: subtotal }],
       subtotal,
-      taxAmount,
+      taxAmount: 0,
       totalAmount,
       type: 'REQUEST'
     };
@@ -202,7 +381,6 @@ export default function Purchases({
             }
             return s;
           });
-          onUpdateSuppliers(updatedSuppliers);
 
           // Update Accounts Payable GL balance
           const updatedAccounts = data.accounts.map(acc => {
@@ -212,12 +390,42 @@ export default function Purchases({
             if (acc.code === '1104001') { // Food Inventory
               return { ...acc, balance: acc.balance + p.subtotal };
             }
-            if (acc.code === '2103001') { // VAT Payable
-              return { ...acc, balance: acc.balance + p.taxAmount };
-            }
             return acc;
           });
-          onUpdateAccounts(updatedAccounts);
+
+          const supplier = data.suppliers.find(s => s.id === p.supplierId);
+          const supplierName = supplier ? (isAr ? supplier.nameAr : supplier.nameEn) : '';
+          const invoiceJV = {
+            id: 'je-pi-' + Math.random().toString(36).substring(2, 9),
+            entryNumber: `JV-${piNumber}`,
+            date: new Date().toISOString().split('T')[0],
+            type: 'AUTO' as any,
+            description: isAr 
+              ? `إثبات فاتورة شراء آجل رقم ${piNumber} من المورد ${supplierName}`
+              : `AP Purchase Invoice ${piNumber} from supplier ${supplierName}`,
+            approved: true,
+            approvedBy: 'مدير المشتريات المالي',
+            lines: [
+              { accountId: '104', debit: p.subtotal, credit: 0 }, // F&B Inventory
+              { accountId: '201', debit: 0, credit: p.totalAmount } // Accounts Payable
+            ].filter(l => l.debit > 0 || l.credit > 0)
+          };
+
+          const nextPurchases = data.purchases.map(curr => curr.id === p.id ? { ...curr, number: piNumber, status: PurchaseStatus.Invoiced } : curr);
+
+          if (onUpdateERPState) {
+            onUpdateERPState(prev => ({
+              ...prev,
+              purchases: nextPurchases,
+              suppliers: updatedSuppliers,
+              accounts: updatedAccounts,
+              journalEntries: [invoiceJV, ...(prev.journalEntries || [])]
+            }));
+          } else {
+            onUpdatePurchases(nextPurchases);
+            onUpdateSuppliers(updatedSuppliers);
+            onUpdateAccounts(updatedAccounts);
+          }
 
           onAddAuditLog(
             `إصدار فاتورة شراء آجل: ${piNumber}`,
@@ -228,58 +436,10 @@ export default function Purchases({
         }
 
         // Transition E: Invoiced -> Paid (Direct Cash/Bank PV)
-        // ** CRITICAL DYNAMIC EFFECT: CASH DEDUCTIONS AND LIABILITY CLEARANCE! **
+        // Opens select source payment modal
         if (p.status === PurchaseStatus.Invoiced) {
-          const pvNumber = p.number.replace('PI', 'PV');
-
-          // Subtract cash from Main Treasury (CB-1)
-          const updatedTreasuries = data.treasuries.map(t => {
-            if (t.id === 'cb-1') {
-              return { ...t, balance: t.balance - p.totalAmount };
-            }
-            return t;
-          });
-          
-          // Clear supplier payable
-          const updatedSuppliers = data.suppliers.map(s => {
-            if (s.id === p.supplierId) {
-              return { ...s, balance: s.balance - p.totalAmount };
-            }
-            return s;
-          });
-          onUpdateSuppliers(updatedSuppliers);
-
-          // Update general ledger accounts
-          const updatedAccounts = data.accounts.map(acc => {
-            if (acc.code === '101') { // Main Cash Box
-              return { ...acc, balance: acc.balance - p.totalAmount };
-            }
-            if (acc.code === '2101001') { // Accounts Payable
-              return { ...acc, balance: acc.balance - p.totalAmount };
-            }
-            return acc;
-          });
-          onUpdateAccounts(updatedAccounts);
-
-          onAddMoneyTransaction({
-            id: 'mt-' + Math.random().toString(36).substring(2, 9),
-            number: pvNumber,
-            date: new Date().toISOString().split('T')[0],
-            type: 'PAYMENT',
-            amount: p.totalAmount,
-            sourceType: 'CASHBOX',
-            sourceId: 'cb-1',
-            destType: 'SUPPLIER',
-            destId: p.supplierId,
-            description: `سداد كامل الفاتورة المستحقة رقم ${p.number} نقداً`
-          });
-
-          onAddAuditLog(
-            `سداد فاتورة المورد نقداً: ${pvNumber}`,
-            `Settled Supplier Payable: ${pvNumber}`,
-            `تم صرف مبلغ ${p.totalAmount} ج.م نقداً من الخزينة الرئيسية لتسوية الحساب.`
-          );
-          return { ...p, number: pvNumber, status: PurchaseStatus.Paid };
+          setPaymentModalTx(p);
+          return p;
         }
 
       }
@@ -329,14 +489,55 @@ export default function Purchases({
               {isAr ? 'قائمة الفواتير وسندات الدورة التشغيلية' : 'Procurement Cycle Tracker'}
             </span>
 
-            <button
-              id="new_pr_toggle_btn"
-              onClick={() => setShowAddPRForm(!showAddPRForm)}
-              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-xl text-xs"
-            >
-              <Plus className="h-4 w-4" />
-              <span>{isAr ? 'إنشاء طلب توريد خامات جديد' : 'Raise Purchase Request'}</span>
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={async () => {
+                  const purchases = (data.purchases || []).map(p => ({
+                    number: p.number,
+                    date: p.date,
+                    supplierName: (() => {
+                      const s = data.suppliers.find(sp => sp.id === p.supplierId);
+                      return s ? (isAr ? s.nameAr : s.nameEn) : '---';
+                    })(),
+                    status: (() => {
+                      const m: Record<string, string> = {
+                        DRAFT: isAr ? 'مسودة' : 'Draft',
+                        REQUESTED: isAr ? 'طلب قيد الاعتماد' : 'PR Pending',
+                        APPROVED: isAr ? 'معتمد للطلب' : 'PR Approved',
+                        ORDERED: isAr ? 'أمر شراء' : 'PO Sent',
+                        RECEIVED: isAr ? 'تم الاستلام' : 'Received',
+                        INVOICED: isAr ? 'فاتورة' : 'Invoiced',
+                        PAID: isAr ? 'تم السداد' : 'Paid',
+                        RETURNED: isAr ? 'مرتجع' : 'Returned',
+                      };
+                      return m[p.status] || p.status;
+                    })(),
+                    itemsSummary: p.items.map(it => {
+                      const item = data.inventory.find(i => i.id === it.itemId);
+                      const name = item ? (isAr ? item.nameAr : item.nameEn) : '---';
+                      return `${name} (${it.quantity} x ${it.unitPrice})`;
+                    }).join('; '),
+                    subtotal: p.subtotal,
+                    taxAmount: p.taxAmount,
+                    totalAmount: p.totalAmount,
+                    type: p.type,
+                  }));
+                  await exportPurchaseTransactionsExcel(purchases, isAr ? 'ar' : 'en');
+                }}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <FileText className="h-4 w-4" />
+                <span>{isAr ? 'تصدير إلى Excel' : 'Export to Excel'}</span>
+              </button>
+              <button
+                id="new_pr_toggle_btn"
+                onClick={() => setShowAddPRForm(!showAddPRForm)}
+                className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-xl text-xs"
+              >
+                <Plus className="h-4 w-4" />
+                <span>{isAr ? 'إنشاء طلب توريد خامات جديد' : 'Raise Purchase Request'}</span>
+              </button>
+            </div>
           </div>
 
           {/* DRAFT PR FORM PANEL */}
@@ -465,7 +666,7 @@ export default function Purchases({
                       <div className="text-[10px] text-slate-400 font-bold space-y-0.5">
                         <p>{isAr ? 'تاريخ السند:' : 'Value Date:'} {tx.date}</p>
                         {tx.items.map((it, idx) => (
-                          <p key={idx}>
+                          <p key={it.itemId}>
                             • {getInventoryItemName(it.itemId)} | {it.quantity} {isAr ? 'وحدات' : 'pcs'} x {it.unitPrice} ج.م = {it.total} ج.م
                           </p>
                         ))}
@@ -475,12 +676,12 @@ export default function Purchases({
                     {/* Right: Balance and promoting controls */}
                     <div className="text-end space-y-3 shrink-0 w-full md:w-auto">
                       <div className="text-start md:text-end">
-                        <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-tight block">{isAr ? 'القيمة الشاملة للضريبة' : 'Value (inc. 14% VAT)'}</span>
+                        <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-tight block">{isAr ? 'الإجمالي' : 'Total Value'}</span>
                         <span className="text-sm font-black text-slate-900 dark:text-white font-mono">{tx.totalAmount.toFixed(2)} ج.م</span>
                       </div>
 
                       {/* Promoted control workflow button */}
-                      {tx.status !== PurchaseStatus.Paid && (
+                      {tx.status !== PurchaseStatus.Paid && tx.status !== PurchaseStatus.Returned && (
                         <button
                           id={`promote_purchase_btn_${tx.id}`}
                           onClick={() => handlePromotePurchase(tx)}
@@ -535,14 +736,31 @@ export default function Purchases({
                 {isAr ? 'جهات توريد خامات المطعم' : 'Supplier Address Book & Ledgers'}
               </span>
 
-              <button
-                id="new_supplier_toggle_btn"
-                onClick={() => setShowAddSupplierForm(!showAddSupplierForm)}
-                className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-xl text-xs"
-              >
-                <Plus className="h-4 w-4" />
-                <span>{isAr ? 'تسجيل مورد جديد' : 'Register Supplier'}</span>
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    const suppliers = (data.suppliers || []).map(s => ({
+                      code: s.code,
+                      name: isAr ? s.nameAr : s.nameEn,
+                      phone: s.phone,
+                      balance: s.balance,
+                    }));
+                    await exportSuppliersExcel(suppliers, isAr ? 'ar' : 'en');
+                  }}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <FileText className="h-4 w-4" />
+                  <span>{isAr ? 'تصدير إلى Excel' : 'Export to Excel'}</span>
+                </button>
+                <button
+                  id="new_supplier_toggle_btn"
+                  onClick={() => setShowAddSupplierForm(!showAddSupplierForm)}
+                  className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-xl text-xs"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>{isAr ? 'تسجيل مورد جديد' : 'Register Supplier'}</span>
+                </button>
+              </div>
             </div>
 
             {/* ADD SUPPLIER FORM DRAWER */}
@@ -600,6 +818,7 @@ export default function Purchases({
                     <th className="py-3 px-4 text-start">{isAr ? 'الاسم التجاري للمؤسسة' : 'Trading Name'}</th>
                     <th className="py-3 px-4 text-start">{isAr ? 'رقم الاتصال السريع' : 'Phone Contact'}</th>
                     <th className="py-3 px-4 text-end">{isAr ? 'حساب مديونية آجل (المستحق)' : 'Outstanding Payable Balance'}</th>
+                    <th className="py-3 px-4 text-center">{isAr ? 'الإجراءات' : 'Actions'}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50 dark:divide-slate-800/40">
@@ -608,17 +827,162 @@ export default function Purchases({
                       <td className="py-3.5 px-4 text-start font-mono text-slate-500">{s.code}</td>
                       <td className="py-3.5 px-4 text-start text-slate-950 dark:text-white">{isAr ? s.nameAr : s.nameEn}</td>
                       <td className="py-3.5 px-4 text-start text-slate-500">{s.phone || '-'}</td>
-                      <td className={`py-3.5 px-4 text-end font-mono font-bold text-sm ${s.balance > 0 ? 'text-amber-600' : 'text-slate-500'}`}>
-                        {new Intl.NumberFormat(isAr ? 'ar-EG' : 'en-US', { style: 'currency', currency: 'EGP' }).format(s.balance)}
+                      <td className={`py-3.5 px-4 text-end font-mono font-bold text-sm ${s.balance > 0 ? 'text-slate-900 dark:text-white' : 'text-slate-500'}`}>
+                        {isAr ? `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(s.balance)} ج.م` : `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(s.balance)} EGP`}
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        <button
+                          onClick={() => handleDeleteSupplier(s.id, s.nameAr)}
+                          className="p-1 rounded-lg bg-rose-50 dark:bg-rose-950/20 hover:bg-rose-600 hover:text-white text-rose-600 dark:text-rose-400 cursor-pointer"
+                          title={isAr ? 'حذف المورد' : 'Delete Supplier'}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-
           </div>
         </>
+      )}
+
+      {/* Custom Styled React Alert Modal */}
+      {alertModal.show && (
+        <div className="fixed inset-0 bg-slate-950/45 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-3xl shadow-2xl w-full max-w-sm text-start overflow-hidden flex flex-col text-xs font-semibold">
+            <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-100 dark:border-slate-850 flex justify-between items-center shrink-0">
+              <span className="font-black text-slate-900 dark:text-white uppercase tracking-wider">{alertModal.title}</span>
+              <button onClick={() => setAlertModal(prev => ({ ...prev, show: false }))} className="text-slate-400 hover:text-slate-655 cursor-pointer"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="p-6 space-y-4 text-center">
+              <div className="flex justify-center">
+                <ShieldAlert className={`h-12 w-12 ${
+                  alertModal.type === 'success' ? 'text-emerald-500' :
+                  alertModal.type === 'error' ? 'text-rose-500' :
+                  alertModal.type === 'warning' ? 'text-amber-500' : 'text-blue-500'
+                }`} />
+              </div>
+              <p className="text-sm font-bold text-slate-800 dark:text-slate-200 leading-relaxed">{alertModal.message}</p>
+            </div>
+            <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-850 flex justify-end shrink-0">
+              <button 
+                onClick={() => setAlertModal(prev => ({ ...prev, show: false }))} 
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-2 rounded-xl cursor-pointer"
+              >
+                {isAr ? 'موافق' : 'OK'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Styled React Confirmation Modal */}
+      {confirmModal.show && (
+        <div className="fixed inset-0 bg-slate-950/45 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-3xl shadow-2xl w-full max-w-sm text-start overflow-hidden flex flex-col text-xs font-semibold">
+            <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-100 dark:border-slate-850 flex justify-between items-center shrink-0">
+              <span className="font-black text-slate-900 dark:text-white uppercase tracking-wider">{confirmModal.title}</span>
+              <button onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))} className="text-slate-400 hover:text-slate-655 cursor-pointer"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="p-6 space-y-4 text-center">
+              <div className="flex justify-center">
+                <ShieldAlert className="h-12 w-12 text-amber-500" />
+              </div>
+              <p className="text-sm font-bold text-slate-800 dark:text-slate-200 leading-relaxed">{confirmModal.message}</p>
+            </div>
+            <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-850 flex justify-end gap-2 shrink-0">
+              <button 
+                onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))} 
+                className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-355 px-4 py-2 rounded-xl cursor-pointer"
+              >
+                {isAr ? 'إلغاء' : 'Cancel'}
+              </button>
+              <button 
+                onClick={() => {
+                  confirmModal.onConfirm();
+                  setConfirmModal(prev => ({ ...prev, show: false }));
+                }} 
+                className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-5 py-2 rounded-xl cursor-pointer"
+              >
+                {isAr ? 'تأكيد' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Selection Modal */}
+      {paymentModalTx && (
+        <div className="fixed inset-0 bg-slate-950/45 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-855 rounded-3xl shadow-2xl w-full max-w-sm text-start overflow-hidden flex flex-col text-xs font-semibold">
+            <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-100 dark:border-slate-855 flex justify-between items-center shrink-0">
+              <span className="font-black text-slate-900 dark:text-white uppercase tracking-wider">
+                {isAr ? 'سداد فاتورة المشتريات' : 'Pay Supplier Invoice'}
+              </span>
+              <button onClick={() => setPaymentModalTx(null)} className="text-slate-400 hover:text-slate-655 cursor-pointer"><X className="h-4 w-4" /></button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              <div>
+                <p className="text-slate-500 font-bold mb-1">{isAr ? 'رقم الفاتورة:' : 'Invoice No:'}</p>
+                <p className="text-sm font-black text-blue-600">{paymentModalTx.number}</p>
+              </div>
+
+              <div>
+                <p className="text-slate-500 font-bold mb-1">{isAr ? 'المورد:' : 'Supplier:'}</p>
+                <p className="text-sm font-black text-slate-800 dark:text-slate-200">{getSupplierName(paymentModalTx.supplierId)}</p>
+              </div>
+
+              <div>
+                <p className="text-slate-500 font-bold mb-1">{isAr ? 'المبلغ المطلوب سداده:' : 'Amount Due:'}</p>
+                <p className="text-base font-black text-slate-900 dark:text-white font-mono">{paymentModalTx.totalAmount.toLocaleString()} ج.م</p>
+              </div>
+
+              <div className="border-t pt-3">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                  {isAr ? 'اختر حساب السداد (خزينة أو بنك):' : 'Select Payment Source (Treasury/Bank):'}
+                </label>
+                <select
+                  value={paymentSourceId}
+                  onChange={(e) => setPaymentSourceId(e.target.value)}
+                  className="w-full text-xs font-semibold py-2.5 px-3 rounded-xl border bg-white dark:bg-slate-950 text-slate-950 dark:text-white"
+                >
+                  <optgroup label={isAr ? '💵 الخزن النقدية' : '💵 Cash Treasuries'}>
+                    {data.treasuries.map(t => (
+                      <option key={t.id} value={t.id}>
+                        {isAr ? t.nameAr : t.nameEn} ({t.balance.toLocaleString()} ج.م)
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label={isAr ? '💳 الحسابات البنكية' : '💳 Bank Accounts'}>
+                    {data.bankAccounts.map(b => (
+                      <option key={b.id} value={b.id}>
+                        {isAr ? b.bankNameAr : b.bankNameEn} ({b.balance.toLocaleString()} ج.م)
+                      </option>
+                    ))}
+                  </optgroup>
+                </select>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-855 flex justify-end gap-2 shrink-0">
+              <button 
+                onClick={() => setPaymentModalTx(null)} 
+                className="bg-slate-100 dark:bg-slate-850 text-slate-700 dark:text-slate-300 px-4 py-2 rounded-xl cursor-pointer"
+              >
+                {isAr ? 'إلغاء' : 'Cancel'}
+              </button>
+              <button 
+                onClick={handleConfirmProcessPayment} 
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-2 rounded-xl cursor-pointer"
+              >
+                {isAr ? 'تأكيد ودفع' : 'Confirm & Pay'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

@@ -1,12 +1,8 @@
 import { useState } from 'react';
-import { Search, Bell, Calendar, MapPin, CheckCircle, Database, ChevronDown, Laptop, Sun, Moon } from 'lucide-react';
+import { Search, Bell, Sun, Moon } from 'lucide-react';
 
 interface HeaderProps {
   lang: 'ar' | 'en';
-  activeBranch: string;
-  setActiveBranch: (branch: string) => void;
-  activePeriod: string;
-  setActivePeriod: (period: string) => void;
   notifications: { id: string; titleAr: string; titleEn: string; type: 'warning' | 'info' | 'danger' }[];
   darkMode: boolean;
   setDarkMode: (val: boolean) => void;
@@ -14,22 +10,12 @@ interface HeaderProps {
 
 export default function Header({ 
   lang, 
-  activeBranch, 
-  setActiveBranch, 
-  activePeriod, 
-  setActivePeriod, 
   notifications,
   darkMode,
   setDarkMode
 }: HeaderProps) {
   const [showNotif, setShowNotif] = useState(false);
   const isAr = lang === 'ar';
-
-  const branchLabels: Record<string, { ar: string; en: string }> = {
-    main: { ar: 'الفرع الرئيسي - المهندسين', en: 'Main Branch - Mohandessin' },
-    dokki: { ar: 'فرع الدقي الجديد', en: 'Dokki Branch' },
-    'nasr-city': { ar: 'فرع مدينة نصر', en: 'Nasr City Branch' }
-  };
 
   return (
     <header 
@@ -54,39 +40,9 @@ export default function Header({
 
       {/* Center metadata / Desktop app status removed */}
 
-      {/* Right controls: branch, period, dark mode, notifications */}
+      {/* Right controls: dark mode, notifications */}
       <div className="flex items-center gap-4">
         
-        {/* Branch Selector */}
-        <div className="relative flex items-center gap-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-700 dark:text-slate-300">
-          <MapPin className="h-3.5 w-3.5 text-blue-600 dark:text-sky-400 shrink-0" />
-          <select
-            id="header_branch_select"
-            value={activeBranch}
-            onChange={(e) => setActiveBranch(e.target.value)}
-            className="bg-transparent font-semibold focus:outline-none cursor-pointer pr-1"
-          >
-            <option value="main" className="dark:bg-slate-950">{isAr ? 'الفرع الرئيسي' : 'Main Branch'}</option>
-            <option value="dokki" className="dark:bg-slate-950">{isAr ? 'فرع الدقي' : 'Dokki Branch'}</option>
-            <option value="nasr-city" className="dark:bg-slate-950">{isAr ? 'فرع مدينة نصر' : 'Nasr City Branch'}</option>
-          </select>
-        </div>
-
-        {/* Accounting Period Selector */}
-        <div className="relative flex items-center gap-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1 text-xs text-slate-700 dark:text-slate-300">
-          <Calendar className="h-3.5 w-3.5 text-blue-600 dark:text-sky-400 shrink-0" />
-          <select
-            id="header_period_select"
-            value={activePeriod}
-            onChange={(e) => setActivePeriod(e.target.value)}
-            className="bg-transparent font-semibold focus:outline-none cursor-pointer pr-1 font-mono"
-          >
-            <option value="2026-06" className="dark:bg-slate-950">06/2026</option>
-            <option value="2026-07" className="dark:bg-slate-950">07/2026</option>
-            <option value="2026-08" className="dark:bg-slate-950">08/2026</option>
-          </select>
-        </div>
-
         {/* Light/Dark Toggle */}
         <button
           id="header_theme_toggle"

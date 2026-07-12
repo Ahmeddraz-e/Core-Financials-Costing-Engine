@@ -1,6 +1,6 @@
 process.env.NODE_ENV = 'production';
 
-const { app, BrowserWindow, shell } = require('electron');
+const { app, BrowserWindow, shell, dialog, ipcMain } = require('electron');
 process.env.APPDATA_PATH = app.getPath('userData');
 
 const path = require('path');
@@ -63,6 +63,8 @@ function startBackendServer() {
 }
 
 function createWindow() {
+  const isDev = !app.isPackaged;
+
   mainWindow = new BrowserWindow({
     width: 1300,
     height: 850,
@@ -70,14 +72,36 @@ function createWindow() {
     minHeight: 700,
     title: 'LODing ERP System',
     icon: path.join(__dirname, 'public', 'favicon.ico'), // Desktop app icon
+    show: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      devTools: isDev,
+      preload: path.join(__dirname, 'preload.cjs'),
     }
   });
 
+  mainWindow.maximize();
+  mainWindow.show();
+
   // Hide the default Electron utility menu for a polished, professional, native look
   mainWindow.setMenuBarVisibility(false);
+
+  // Prevent keyboard shortcuts from opening DevTools in production
+  if (!isDev) {
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i')) {
+        event.preventDefault();
+      }
+    });
+  }
+
+  // Pipe front-end console messages to main process console (recorded in app-debug.log)
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    const levels = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
+    const lvl = levels[level] || 'LOG';
+    console.log(`[RENDERER ${lvl}] (${path.basename(sourceId)}:${line}) ${message}`);
+  });
 
   // Poll the Express server until it is fully started, then load the URL
   const pollInterval = setInterval(() => {
@@ -105,6 +129,26 @@ function createWindow() {
     return { action: 'deny' };
   });
 }
+
+// IPC handler: open native folder picker dialog
+ipcMain.handle('dialog:selectFolder', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
+
+// IPC handler: open native file picker for backup .db files
+ipcMain.handle('dialog:selectBackupFile', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    filters: [
+      { name: 'Database Backup Files', extensions: ['db'] },
+      { name: 'All Files', extensions: ['*'] }
+    ]
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
 
 // Start backend server as soon as Electron starts
 startBackendServer();

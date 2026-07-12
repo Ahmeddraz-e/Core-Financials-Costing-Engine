@@ -5,10 +5,12 @@ function mapEmployee(r: any) {
   return {
     ...r,
     active: !!r.active,
-    allowances: r.allowances ?? undefined,
-    deductions: r.deductions ?? undefined,
-    overtimeHours: r.overtimeHours ?? undefined,
-    workingDays: r.workingDays ?? undefined
+    allowances: r.allowances ?? 0,
+    deductions: r.deductions ?? 0,
+    overtimeHours: r.overtimeHours ?? 0,
+    workingDays: r.workingDays ?? 0,
+    workingHours: r.workingHours ?? 0,
+    annualLeaveBalance: r.annualLeaveBalance ?? 0
   };
 }
 
@@ -25,15 +27,20 @@ export function getEmployeeById(db: Database.Database, id: string) {
 export function createEmployee(db: Database.Database, data: {
   code: string; nameAr: string; nameEn: string; role: string;
   salary: number; shift: string; allowances?: number; deductions?: number;
+  nationalId?: string; department?: string; email?: string; phone?: string;
+  hireDate?: string; contractType?: string; manager?: string; status?: string;
+  timelineJson?: string; contractStartDate?: string; contractEndDate?: string;
+  overtimeHours?: number; workingDays?: number; workingHours?: number;
+  annualLeaveBalance?: number;
 }) {
   const existing = db.prepare('SELECT id FROM employees WHERE code = ?').get(data.code);
   if (existing) throw new Error('Employee code already exists');
 
   const id = generateId('emp');
   db.prepare(`
-    INSERT INTO employees (id, code, nameAr, nameEn, role, salary, shift, loanBalance, active, allowances, deductions, overtimeHours, workingDays)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, 0, 0)
-  `).run(id, data.code, data.nameAr, data.nameEn, data.role, data.salary, data.shift, data.allowances ?? 0, data.deductions ?? 0);
+    INSERT INTO employees (id, code, nameAr, nameEn, role, salary, shift, loanBalance, active, allowances, deductions, overtimeHours, workingDays, workingHours, nationalId, department, email, phone, hireDate, contractType, manager, status, timelineJson, contractStartDate, contractEndDate, annualLeaveBalance)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, data.code, data.nameAr, data.nameEn, data.role, data.salary, data.shift, data.allowances ?? 0, data.deductions ?? 0, data.overtimeHours ?? 0, data.workingDays ?? 0, data.workingHours ?? 0, data.nationalId ?? '', data.department ?? '', data.email ?? '', data.phone ?? '', data.hireDate ?? '', data.contractType ?? '', data.manager ?? '', data.status ?? 'ACTIVE', data.timelineJson ?? '[]', data.contractStartDate ?? '', data.contractEndDate ?? '', data.annualLeaveBalance ?? 0);
 
   return getEmployeeById(db, id);
 }
@@ -41,7 +48,11 @@ export function createEmployee(db: Database.Database, data: {
 export function updateEmployee(db: Database.Database, id: string, data: Partial<{
   nameAr: string; nameEn: string; role: string; salary: number; shift: string;
   loanBalance: number; active: boolean; allowances: number; deductions: number;
-  overtimeHours: number; workingDays: number;
+  overtimeHours: number; workingDays: number; workingHours: number;
+  nationalId: string; department: string; email: string; phone: string;
+  hireDate: string; contractType: string; manager: string; status: string;
+  timelineJson: string; contractStartDate: string; contractEndDate: string;
+  annualLeaveBalance: number;
 }>) {
   const existing = db.prepare('SELECT * FROM employees WHERE id = ?').get(id) as any;
   if (!existing) throw new Error('Employee not found');
@@ -60,6 +71,19 @@ export function updateEmployee(db: Database.Database, id: string, data: Partial<
   if (data.deductions !== undefined) { fields.push('deductions = ?'); values.push(data.deductions); }
   if (data.overtimeHours !== undefined) { fields.push('overtimeHours = ?'); values.push(data.overtimeHours); }
   if (data.workingDays !== undefined) { fields.push('workingDays = ?'); values.push(data.workingDays); }
+  if (data.workingHours !== undefined) { fields.push('workingHours = ?'); values.push(data.workingHours); }
+  if (data.nationalId !== undefined) { fields.push('nationalId = ?'); values.push(data.nationalId); }
+  if (data.department !== undefined) { fields.push('department = ?'); values.push(data.department); }
+  if (data.email !== undefined) { fields.push('email = ?'); values.push(data.email); }
+  if (data.phone !== undefined) { fields.push('phone = ?'); values.push(data.phone); }
+  if (data.hireDate !== undefined) { fields.push('hireDate = ?'); values.push(data.hireDate); }
+  if (data.contractType !== undefined) { fields.push('contractType = ?'); values.push(data.contractType); }
+  if (data.manager !== undefined) { fields.push('manager = ?'); values.push(data.manager); }
+  if (data.status !== undefined) { fields.push('status = ?'); values.push(data.status); }
+  if (data.timelineJson !== undefined) { fields.push('timelineJson = ?'); values.push(data.timelineJson); }
+  if (data.contractStartDate !== undefined) { fields.push('contractStartDate = ?'); values.push(data.contractStartDate); }
+  if (data.contractEndDate !== undefined) { fields.push('contractEndDate = ?'); values.push(data.contractEndDate); }
+  if (data.annualLeaveBalance !== undefined) { fields.push('annualLeaveBalance = ?'); values.push(data.annualLeaveBalance); }
 
   if (fields.length > 0) {
     values.push(id);

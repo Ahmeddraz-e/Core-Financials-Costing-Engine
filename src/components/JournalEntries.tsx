@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { BookOpen, Plus, Trash2, Check, AlertCircle, Save, Calendar, Eye, FileText, CheckCircle, Download } from 'lucide-react';
-import { ERPData, JournalEntry, JournalEntryType, JournalLine, Account } from '../types';
+import { BookOpen, Plus, Trash2, Check, AlertCircle, Save, Calendar, Eye, FileText, CheckCircle, Download, ChevronDown, ChevronUp } from 'lucide-react';
+import { ERPData, JournalEntry, JournalEntryType, JournalLine, Account, AccountType } from '../types';
 import { exportToCSV } from '../utils/printUtils';
 
 interface JournalEntriesProps {
@@ -8,6 +8,8 @@ interface JournalEntriesProps {
   lang: 'ar' | 'en';
   onUpdateEntries: (entries: JournalEntry[]) => void;
   onUpdateAccounts: (accounts: Account[]) => void;
+  onUpdateTreasuries: (treasuries: any[]) => void;
+  onUpdateBankAccounts: (bankAccounts: any[]) => void;
   onAddAuditLog: (actionAr: string, actionEn: string, details: string) => void;
 }
 
@@ -16,11 +18,21 @@ export default function JournalEntries({
   lang, 
   onUpdateEntries, 
   onUpdateAccounts, 
+  onUpdateTreasuries,
+  onUpdateBankAccounts,
   onAddAuditLog 
 }: JournalEntriesProps) {
   const isAr = lang === 'ar';
+
+  const getAccountNature = (type: AccountType) => {
+    const isDebit = type === AccountType.Asset || type === AccountType.CostOfSales || type === AccountType.Expense;
+    return isAr
+      ? (isDebit ? 'مدين' : 'دائن')
+      : (isDebit ? 'Debit' : 'Credit');
+  };
   const [showAddForm, setShowAddForm] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<JournalEntry | null>(null);
+  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
   const formatCurrency = (val: number) => {
     const hasDecimal = val % 1 !== 0;
@@ -121,32 +133,60 @@ export default function JournalEntries({
     };
 
     // Apply double-entry balances to general ledger accounts!
+    // Compute net balance change per account from the journal lines
+    const balanceChanges = new Map<string, number>();
+    lines.forEach(l => {
+      const acc = data.accounts.find(a => a.id === l.accountId);
+      if (!acc) return;
+      const isDebitAcc = acc.type === 'ASSET' || acc.type === 'COST_OF_SALES' || acc.type === 'EXPENSE';
+      const change = isDebitAcc
+        ? (Number(l.debit) || 0) - (Number(l.credit) || 0)
+        : (Number(l.credit) || 0) - (Number(l.debit) || 0);
+      balanceChanges.set(l.accountId, (balanceChanges.get(l.accountId) || 0) + change);
+    });
+
     const updatedAccounts = data.accounts.map(acc => {
-      // Find lines affecting this account
-      const affectLines = lines.filter(l => l.accountId === acc.id);
-      if (affectLines.length > 0) {
-        let balanceChange = 0;
-        affectLines.forEach(l => {
-          // Debit increases Assets, Expenses, Cost of Sales. Credits decrease them.
-          // For Liabilities, Equity, Revenues, Credits increase, Debits decrease.
-          const isDebitAcc = acc.type === 'ASSET' || acc.type === 'COST_OF_SALES' || acc.type === 'EXPENSE';
-          if (isDebitAcc) {
-            balanceChange += (l.debit - l.credit);
-          } else {
-            balanceChange += (l.credit - l.debit);
-          }
-        });
-        return {
-          ...acc,
-          balance: acc.balance + balanceChange
-        };
+      const change = balanceChanges.get(acc.id);
+      if (change) {
+        return { ...acc, balance: acc.balance + change };
       }
       return acc;
+    });
+
+    // Sync linked treasuries
+    const updatedTreasuries = (data.treasuries || []).map(t => {
+      const accId = t.accountId || (t.id === 'cb-1' ? '101' : '');
+      const change = balanceChanges.get(accId);
+      if (change) {
+        return { ...t, balance: t.balance + change };
+      }
+      return t;
+    });
+
+    // Sync linked bank accounts (with balance validation)
+    const updatedBankAccounts = (data.bankAccounts || []).map(b => {
+      const accId = b.accountId || (b.id === 'ba-1' ? '102' : '');
+      const change = balanceChanges.get(accId);
+      if (change && change < 0 && (b.balance + change) < 0) {
+        // Prevent bank from going negative
+        window.showAlert(
+          `المبلغ غير متوفر في الحساب البنكي ${b.bankNameAr}`,
+          `Insufficient balance in bank account ${b.bankNameEn}`,
+          'danger'
+        );
+        return b; // Skip this bank, don't apply change
+      }
+      if (change) {
+        return { ...b, balance: b.balance + change };
+      }
+      return b;
     });
 
     const updatedEntries = [newEntry, ...data.journalEntries];
 
     onUpdateAccounts(updatedAccounts);
+    onUpdateTreasuries(updatedTreasuries);
+    onUpdateBankAccounts(updatedBankAccounts);
     onUpdateEntries(updatedEntries);
 
     onAddAuditLog(
@@ -271,7 +311,7 @@ export default function JournalEntries({
 
               <div className="space-y-2">
                 {lines.map((line, idx) => (
-                  <div key={idx} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+                  <div key={`line-${idx}`} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
                     
                     {/* GL Account Selection */}
                     <div className="md:col-span-6">
@@ -285,7 +325,7 @@ export default function JournalEntries({
                         <option value="">{isAr ? '-- اختر الحساب الدائن/المدين --' : '-- Choose general ledger account --'}</option>
                         {data.accounts.map(acc => (
                           <option key={acc.id} value={acc.id}>
-                            {acc.code} - {isAr ? acc.nameAr : acc.nameEn} (الرصيد: {acc.balance} ج.م)
+                            {acc.code} - {isAr ? acc.nameAr : acc.nameEn} [{getAccountNature(acc.type)}] (الرصيد: {acc.balance} ج.م)
                           </option>
                         ))}
                       </select>
@@ -325,7 +365,7 @@ export default function JournalEntries({
                         type="button"
                         onClick={() => handleRemoveLine(idx)}
                         disabled={lines.length <= 2}
-                        className="p-2 rounded bg-rose-50 dark:bg-rose-950/20 text-rose-600 disabled:opacity-30"
+                        className="p-2 rounded bg-rose-50 dark:bg-rose-950/20 text-slate-900 dark:text-white disabled:opacity-30"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -353,7 +393,7 @@ export default function JournalEntries({
             }`}>
               <div className="flex items-center gap-3">
                 {isBalanced ? (
-                  <CheckCircle className="h-5.5 w-5.5 text-emerald-600 shrink-0" />
+                  <CheckCircle className="h-5.5 w-5.5 text-slate-900 dark:text-white shrink-0" />
                 ) : (
                   <AlertCircle className="h-5.5 w-5.5 text-rose-500 shrink-0" />
                 )}
@@ -380,9 +420,9 @@ export default function JournalEntries({
                   <span className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-tight">{isAr ? 'إجمالي الدائن' : 'Total Credits'}</span>
                   <span className="text-slate-800 dark:text-slate-200 font-mono text-sm">{totalCredit.toFixed(2)}</span>
                 </div>
-                <div className="text-end border-l pl-4 border-slate-200 dark:border-slate-800">
+                <div className="text-end border-s ps-4 border-slate-200 dark:border-slate-800">
                   <span className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-tight">{isAr ? 'الفارق المتبقي' : 'Unallocated Variance'}</span>
-                  <span className={difference > 0 ? 'text-rose-600 font-bold text-sm' : 'text-emerald-600 font-bold text-sm'}>
+                  <span className={difference > 0 ? 'text-slate-900 dark:text-white font-bold text-sm' : 'text-slate-900 dark:text-white font-bold text-sm'}>
                     {difference.toFixed(2)}
                   </span>
                 </div>
@@ -451,7 +491,7 @@ export default function JournalEntries({
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                           entry.type === JournalEntryType.Opening ? 'bg-violet-500/10 text-violet-600' :
                           entry.type === JournalEntryType.Adjustment ? 'bg-amber-500/10 text-amber-600' :
-                          entry.type === JournalEntryType.Auto ? 'bg-emerald-500/10 text-emerald-600' :
+                          entry.type === JournalEntryType.Auto ? 'bg-emerald-500/10 text-slate-900 dark:text-white' :
                           'bg-slate-500/10 text-slate-600'
                         }`}>
                           {isAr ? entry.type : entry.type}
@@ -480,21 +520,51 @@ export default function JournalEntries({
                               {isAr ? 'القيود المحاسبية التفصيلية للدفتر' : 'Underlying General Ledger Rows'}
                             </span>
                             <div className="space-y-1">
-                              {entry.lines.map((l, lIdx) => (
-                                <div key={lIdx} className="flex justify-between items-center text-xs border-b border-slate-50 dark:border-slate-800/40 py-1.5 last:border-0 font-semibold">
-                                  <span className="text-slate-700 dark:text-slate-300">
-                                    {getAccountName(l.accountId)}
-                                  </span>
-                                  <div className="flex gap-8 font-mono text-[11px]">
-                                    <div className="w-24 text-end">
-                                      {l.debit > 0 && <span className="text-emerald-600 font-bold">{l.debit.toFixed(2)} (Dr)</span>}
+                              {entry.lines.map((l, lIdx) => {
+                                const lineKey = `${entry.id}-${lIdx}`;
+                                const showItems = expandedItems.has(lineKey);
+                                const hasItems = l.items && l.items.length > 0;
+                                return (
+                                  <div key={lIdx}>
+                                    <div className="flex justify-between items-center text-xs border-b border-slate-50 dark:border-slate-800/40 py-1.5 last:border-0 font-semibold">
+                                      <span className="text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                                        {hasItems && (
+                                          <button onClick={() => {
+                                            const next = new Set(expandedItems);
+                                            if (showItems) next.delete(lineKey);
+                                            else next.add(lineKey);
+                                            setExpandedItems(next);
+                                          }} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer p-0.5">
+                                            {showItems ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                                          </button>
+                                        )}
+                                        {getAccountName(l.accountId)}
+                                      </span>
+                                      <div className="flex gap-8 font-mono text-[11px]">
+                                        <div className="w-24 text-end">
+                                          {l.debit > 0 && <span className="text-slate-900 dark:text-white font-bold">{l.debit.toFixed(2)} (Dr)</span>}
+                                        </div>
+                                        <div className="w-24 text-end">
+                                          {l.credit > 0 && <span className="text-slate-500">{l.credit.toFixed(2)} (Cr)</span>}
+                                        </div>
+                                      </div>
                                     </div>
-                                    <div className="w-24 text-end">
-                                      {l.credit > 0 && <span className="text-slate-500">{l.credit.toFixed(2)} (Cr)</span>}
-                                    </div>
+                                    {hasItems && showItems && (
+                                      <div className="ps-6 py-1 space-y-0.5 border-b border-slate-50 dark:border-slate-800/40">
+                                        {l.items!.map((item, iIdx) => (
+                                          <div key={iIdx} className="flex justify-between items-center text-[10px] text-slate-500 dark:text-slate-400 py-0.5">
+                                            <span>{isAr ? item.nameAr : item.nameEn}</span>
+                                            <span className="font-mono whitespace-nowrap">
+                                              {item.quantity.toFixed(3)} {isAr ? item.unitAr : item.unitEn}
+                                              <span className="ms-3 text-slate-400">({item.cost.toFixed(2)})</span>
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
                                   </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           </div>
                         </td>

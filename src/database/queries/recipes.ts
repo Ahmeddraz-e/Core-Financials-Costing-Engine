@@ -6,6 +6,8 @@ function mapRecipe(db: Database.Database, r: any) {
   return {
     id: r.id,
     itemId: r.itemId,
+    version: r.version,
+    isActive: r.isActive === 1,
     yieldAmount: r.yieldAmount,
     components: components.map(c => ({
       componentItemId: c.componentItemId,
@@ -44,13 +46,14 @@ export function createRecipe(db: Database.Database, data: {
   components: { componentItemId: string; quantity: number; lossPercent: number }[];
   laborCost: number; packagingCost: number; otherOperatingCost: number;
   calculatedCost: number; sellingPrice: number; marginPercent: number; foodCostPercent: number;
+  version?: number; isActive?: boolean;
 }) {
   const id = generateId('rec');
   const tx = db.transaction(() => {
     db.prepare(`
-      INSERT INTO recipes (id, itemId, yieldAmount, laborCost, packagingCost, otherOperatingCost, calculatedCost, sellingPrice, marginPercent, foodCostPercent)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, data.itemId, data.yieldAmount, data.laborCost, data.packagingCost, data.otherOperatingCost, data.calculatedCost, data.sellingPrice, data.marginPercent, data.foodCostPercent);
+      INSERT INTO recipes (id, itemId, version, isActive, yieldAmount, laborCost, packagingCost, otherOperatingCost, calculatedCost, sellingPrice, marginPercent, foodCostPercent)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, data.itemId, data.version || 1, data.isActive !== false ? 1 : 0, data.yieldAmount, data.laborCost, data.packagingCost, data.otherOperatingCost, data.calculatedCost, data.sellingPrice, data.marginPercent, data.foodCostPercent);
 
     const insertComp = db.prepare('INSERT INTO recipe_components (id, recipeId, componentItemId, quantity, lossPercent) VALUES (?, ?, ?, ?, ?)');
     data.components.forEach((c, i) => {

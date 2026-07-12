@@ -31,6 +31,7 @@ export interface JournalLine {
   accountId: string;
   debit: number;
   credit: number;
+  items?: { itemId: string; nameAr: string; nameEn: string; quantity: number; unitAr: string; unitEn: string; cost: number }[];
 }
 
 export interface JournalEntry {
@@ -51,7 +52,8 @@ export enum PurchaseStatus {
   Ordered = 'ORDERED',
   Received = 'RECEIVED',
   Invoiced = 'INVOICED',
-  Paid = 'PAID'
+  Paid = 'PAID',
+  Returned = 'RETURNED'
 }
 
 export interface PurchaseItem {
@@ -116,6 +118,8 @@ export interface RecipeComponent {
 export interface Recipe {
   id: string;
   itemId: string; // The finished product ID in InventoryItem
+  version?: number;
+  isActive?: boolean;
   yieldAmount: number; // output amount of the recipe (e.g., 1 meal or 1 kg)
   components: RecipeComponent[];
   laborCost: number;
@@ -268,6 +272,19 @@ export interface Employee {
   deductions?: number;
   overtimeHours?: number;
   workingDays?: number;
+  workingHours?: number;
+  nationalId?: string;
+  department?: string;
+  email?: string;
+  phone?: string;
+  hireDate?: string;
+  contractType?: string;
+  manager?: string;
+  status?: string;
+  timelineJson?: string;
+  contractStartDate?: string;
+  contractEndDate?: string;
+  annualLeaveBalance?: number;
 }
 
 // Each key represents a tab/module ID from the sidebar
@@ -308,19 +325,19 @@ export const ROLE_PERMISSIONS: Record<string, UserPermissions> = {
     dashboard: true, accounts: true, journals: true, general_ledger: true,
     statement_of_account: true, vouchers: true, treasury: true, fixed_assets: true,
     purchases: false, inventory: false, recipes: false, sales_invoices: true,
-    sales: false, returns: true, hr: false, payroll_runs: false, budgets: true,
-    period_closing: true, reports: true, audit_log: false, user_management: false
+    sales: true, returns: true, hr: false, payroll_runs: false, budgets: true,
+    period_closing: true, reports: true, audit_log: true, user_management: false
   },
   cashier: {
     dashboard: true, accounts: false, journals: false, general_ledger: false,
     statement_of_account: false, vouchers: false, treasury: false, fixed_assets: false,
     purchases: false, inventory: false, recipes: false, sales_invoices: false,
-    sales: true, returns: false, hr: false, payroll_runs: false, budgets: false,
+    sales: true, returns: true, hr: false, payroll_runs: false, budgets: false,
     period_closing: false, reports: false, audit_log: false, user_management: false
   },
   store_manager: {
     dashboard: true, accounts: false, journals: false, general_ledger: false,
-    statement_of_account: false, vouchers: false, treasury: false, fixed_assets: false,
+    statement_of_account: false, vouchers: true, treasury: false, fixed_assets: false,
     purchases: true, inventory: true, recipes: true, sales_invoices: false,
     sales: false, returns: true, hr: false, payroll_runs: false, budgets: false,
     period_closing: false, reports: true, audit_log: false, user_management: false
@@ -550,8 +567,9 @@ export interface AccountingPeriod {
 export interface BackupSchedule {
   frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY';
   time: string;
-  target: 'LOCAL' | 'USB' | 'LAN';
+  target: string;
   enabled: boolean;
+  customPath?: string;
 }
 
 export interface ERPData {
@@ -581,5 +599,27 @@ export interface ERPData {
   payrollRuns: PayrollRun[];
   accountingPeriods: AccountingPeriod[];
   checkbooks?: Checkbook[];
+  hrLeaves?: any[];
+  hrCandidates?: any[];
+  hrDepartments?: any[];
+  hrJobs?: any[];
+  hrAppraisals?: any[];
+  hrLoans?: any[];
+  hrDocuments?: any[];
+  hrTrainings?: any[];
+  hrAttendance?: any[];
+  hrEvents?: any[];
+  companyProfile?: {
+    nameAr: string;
+    nameEn: string;
+    registrationNumber: string;
+    taxNumber: string;
+    addressAr: string;
+    addressEn: string;
+    email: string;
+    phone: string;
+    branches?: string;
+    zakatRate?: number;
+  };
 }
 

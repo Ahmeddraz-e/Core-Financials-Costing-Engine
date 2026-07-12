@@ -1,15 +1,16 @@
 import React, { useState, useMemo } from 'react';
-import { 
-  Coins, Plus, Search, ChevronRight, TrendingUp, TrendingDown, 
-  ArrowRightLeft, CreditCard, Save, Calendar, Check, AlertOctagon, 
-  Printer, Download, Eye, Edit, Trash2, ArrowUpRight, ArrowDownRight, 
+import {
+  Coins, Plus, Search, ChevronRight, TrendingUp, TrendingDown,
+  ArrowRightLeft, CreditCard, Save, Calendar, Check, AlertOctagon,
+  Printer, Download, Eye, Edit, Trash2, ArrowUpRight, ArrowDownRight,
   BookOpen, X, FileSpreadsheet, Lock, Briefcase, Key, ShieldCheck, Landmark, FileText
 } from 'lucide-react';
-import { 
-  ERPData, Treasury, BankAccount, MoneyTransaction, Cheque, 
-  ChequeStatus, Account, JournalEntry, Voucher, VoucherType, Checkbook, CheckbookCheck 
+import {
+  ERPData, Treasury, BankAccount, MoneyTransaction, Cheque,
+  ChequeStatus, Account, JournalEntry, Voucher, VoucherType, Checkbook, CheckbookCheck
 } from '../types';
 import { printDocument, fmtCurrency, fmtDate, numberToArabicWords, companyHeaderHTML, signaturesHTML, footerHTML, exportToCSV } from '../utils/printUtils';
+import { exportTreasuryStatementExcel, exportTreasuryCheckbookExcel, exportTreasuryDashboardExcel } from '../utils/excelExport';
 
 interface TreasuryProps {
   data: ERPData;
@@ -141,21 +142,21 @@ export default function TreasuryModule({
   // Safe names and helpers for current entity to prevent type casting union compile errors
   const currentEntityNameAr = useMemo(() => {
     if (!currentEntity) return '';
-    return currentEntity.isBank 
-      ? (currentEntity as BankAccount).bankNameAr 
+    return currentEntity.isBank
+      ? (currentEntity as BankAccount).bankNameAr
       : (currentEntity as Treasury).nameAr;
   }, [currentEntity]);
 
   const currentEntityNameEn = useMemo(() => {
     if (!currentEntity) return '';
-    return currentEntity.isBank 
-      ? (currentEntity as BankAccount).bankNameEn 
+    return currentEntity.isBank
+      ? (currentEntity as BankAccount).bankNameEn
       : (currentEntity as Treasury).nameEn;
   }, [currentEntity]);
 
   const currentEntityAccount = useMemo(() => {
     if (!currentEntity) return null;
-    const accId = currentEntity.isBank 
+    const accId = currentEntity.isBank
       ? getBankAccountId(currentEntity as BankAccount)
       : getSafeAccountId(currentEntity as Treasury);
     return data.accounts.find(a => a.id === accId) || null;
@@ -224,7 +225,7 @@ export default function TreasuryModule({
         ]
       };
       updatedEntries = [openingJV, ...updatedEntries];
-      
+
       // Update Share Capital balance
       const shareCapitalIndex = updatedAccounts.findIndex(a => a.id === '301');
       if (shareCapitalIndex > -1) {
@@ -424,7 +425,7 @@ export default function TreasuryModule({
   // Safe/Bank Search & Card filtering
   const filteredDashboardCards = useMemo(() => {
     const list: any[] = [];
-    
+
     if (filterType === 'ALL' || filterType === 'SAFES') {
       data.treasuries.forEach(t => {
         list.push({ ...t, cardType: 'SAFE' });
@@ -468,13 +469,13 @@ export default function TreasuryModule({
       const unused = book.checks.filter(c => c.status === 'UNUSED').length;
       return isAr ? `المتبقي: ${unused} شيك` : `Remaining: ${unused} checks`;
     }
-    
+
     // Find latest money transaction where this is source or dest
-    const tx = data.moneyTransactions.find(m => 
+    const tx = data.moneyTransactions.find(m =>
       (cardType === 'SAFE' && ((m.sourceType === 'CASHBOX' && m.sourceId === cardId) || (m.destType === 'CASHBOX' && m.destId === cardId))) ||
       (cardType === 'BANK' && ((m.sourceType === 'BANK' && m.sourceId === cardId) || (m.destType === 'BANK' && m.destId === cardId)))
     );
-    
+
     if (!tx) return isAr ? 'لا توجد حركات' : 'No transactions';
     return `${tx.date} — ${formatCurrency(tx.amount)} (${tx.type})`;
   };
@@ -564,7 +565,7 @@ export default function TreasuryModule({
         // Supplier balance (payable liability) decreases on Payment (debit liability), increases on receipt (credit liability)
         const isAsset = acc.type === 'ASSET';
         const isLiability = acc.type === 'LIABILITY';
-        
+
         let change = 0;
         if (isAsset) {
           change = isReceipt ? -amount : amount;
@@ -761,7 +762,7 @@ export default function TreasuryModule({
     }
 
     if (currentEntity.balance < transferAmount) {
-      window.showAlert('رصيد الخزينة/البنك غير كافٍ للتحويل', 'Insufficient balance for transfer', 'warning');
+      window.showAlert('المبلغ غير متوفر - رصيد الخزينة/البنك غير كافٍ للتحويل', 'Insufficient balance for transfer', 'danger');
       return;
     }
 
@@ -781,6 +782,15 @@ export default function TreasuryModule({
     const destAccountId = transferDestType === 'BANK'
       ? getBankAccountId(destObj as BankAccount)
       : getSafeAccountId(destObj as Treasury);
+
+    // Final safety check: re-verify balance from source data
+    const sourceBalance = currentEntity.isBank
+      ? (data.bankAccounts.find(b => b.id === currentEntity.id)?.balance ?? 0)
+      : (data.treasuries.find(t => t.id === currentEntity.id)?.balance ?? 0);
+    if (sourceBalance < transferAmount) {
+      window.showAlert('المبلغ غير متوفر - الرصيد الحالي غير كافٍ', 'Insufficient balance - transfer cancelled', 'danger');
+      return;
+    }
 
     // 1. Update balances
     const updatedAccounts = data.accounts.map(acc => {
@@ -881,20 +891,20 @@ export default function TreasuryModule({
 
     // Filter moneyTransactions
     const filtered = data.moneyTransactions.filter(tx => {
-      const isSource = isBank 
+      const isSource = isBank
         ? (tx.sourceType === 'BANK' && tx.sourceId === entityId)
         : (tx.sourceType === 'CASHBOX' && tx.sourceId === entityId);
-      
-      const isDest = isBank 
+
+      const isDest = isBank
         ? (tx.destType === 'BANK' && tx.destId === entityId)
         : (tx.destType === 'CASHBOX' && tx.destId === entityId);
 
       const inDateRange = (!statementStart || tx.date >= statementStart) &&
-                          (!statementEnd || tx.date <= statementEnd);
+        (!statementEnd || tx.date <= statementEnd);
 
-      const matchesSearch = !statementSearch || 
-                            tx.number.toLowerCase().includes(statementSearch.toLowerCase()) ||
-                            tx.description.toLowerCase().includes(statementSearch.toLowerCase());
+      const matchesSearch = !statementSearch ||
+        tx.number.toLowerCase().includes(statementSearch.toLowerCase()) ||
+        tx.description.toLowerCase().includes(statementSearch.toLowerCase());
 
       return (isSource || isDest) && inDateRange && matchesSearch;
     });
@@ -904,12 +914,12 @@ export default function TreasuryModule({
 
     let balance = 0;
     return filtered.map(tx => {
-      const isSource = isBank 
+      const isSource = isBank
         ? (tx.sourceType === 'BANK' && tx.sourceId === entityId)
         : (tx.sourceType === 'CASHBOX' && tx.sourceId === entityId);
 
       // Source means cash is leaving (Credit / Outflow), Dest means cash is coming in (Debit / Inflow)
-      const isOutflow = isSource; 
+      const isOutflow = isSource;
       const debit = isOutflow ? 0 : tx.amount;
       const credit = isOutflow ? tx.amount : 0;
       balance = isOutflow ? balance - tx.amount : balance + tx.amount;
@@ -926,7 +936,7 @@ export default function TreasuryModule({
   // Settle Checkbook check status
   const toggleCheckStatus = (bookId: string, checkNum: number, currentStatus: string) => {
     const nextStatus = (currentStatus === 'UNUSED' ? 'CANCELLED' : 'UNUSED') as 'UNUSED' | 'CANCELLED';
-    
+
     const updated = (data.checkbooks || []).map(cb => {
       if (cb.id === bookId) {
         return {
@@ -936,7 +946,7 @@ export default function TreasuryModule({
       }
       return cb;
     });
-    
+
     onUpdateCheckbooks(updated);
     onAddAuditLog(
       `تعديل حالة شيك: رقم ${checkNum}`,
@@ -952,12 +962,29 @@ export default function TreasuryModule({
       isAr ? `⚠️ هل أنت متأكد من حذف "${name}" بالكامل من النظام؟ سيتم حذف ربطها فقط دون التأثير على القيود المحاسبية التاريخية.` : `Are you sure you want to delete "${name}"? Historical ledger entries won't be deleted.`,
       isAr ? `تنبيه: لا يمكن التراجع عن هذا الإجراء` : `Warning: This action cannot be undone`,
       () => {
+        let linkedAccountId = '';
+
         if (isBank) {
+          const bank = data.bankAccounts.find(b => b.id === id);
+          if (bank) {
+            linkedAccountId = getBankAccountId(bank);
+            // Remove linked checkbooks
+            onUpdateCheckbooks((data.checkbooks || []).filter(c => c.bankAccountId !== bank.id));
+          }
           onUpdateBankAccounts(data.bankAccounts.filter(b => b.id !== id));
         } else {
+          const safe = data.treasuries.find(t => t.id === id);
+          if (safe) {
+            linkedAccountId = getSafeAccountId(safe);
+          }
           onUpdateTreasuries(data.treasuries.filter(t => t.id !== id));
         }
-        
+
+        // Remove linked account from chart of accounts
+        if (linkedAccountId) {
+          onUpdateAccounts(data.accounts.filter(a => a.id !== linkedAccountId));
+        }
+
         onAddAuditLog(
           `حذف خزنة/بنك: ${name}`,
           `Deleted Safe/Bank: ${name}`,
@@ -972,121 +999,59 @@ export default function TreasuryModule({
     );
   };
 
-  // Export checkbook checks to Excel
-  const handleExportCheckbookToExcel = (book: Checkbook) => {
-    const bank = data.bankAccounts.find(b => b.id === book.bankAccountId);
-    const rows = book.checks.map(c => ({
-      'رقم الشيك': c.number,
-      'حالة الشيك': c.status === 'UNUSED' ? (isAr ? 'متاح / غير مستخدم' : 'Unused') :
-                   c.status === 'USED' ? (isAr ? 'صادر / مستخدم' : 'Used') :
-                   (isAr ? 'ملغى' : 'Cancelled'),
-      'البنك المرتبط': bank ? (isAr ? bank.bankNameAr : bank.bankNameEn) : '',
-      'رقم الحساب البنكي': bank ? bank.accountNumber : '',
-      'دفتر الشيكات': book.code
-    }));
-    exportToCSV(rows, `checkbook-${book.code}`);
+  // Export checkbook checks to Excel (ExcelJS professional)
+  const handleExportCheckbookToExcel = async (book: Checkbook) => {
+    try {
+      const bank = data.bankAccounts.find(b => b.id === book.bankAccountId);
+      const bankName = bank ? (isAr ? bank.bankNameAr : bank.bankNameEn) : '';
+      const checks = book.checks.map(c => ({
+        number: c.number,
+        status: c.status === 'UNUSED' ? (isAr ? 'متاح' : 'Unused') :
+          c.status === 'USED' ? (isAr ? 'مستخدم' : 'Used') : (isAr ? 'ملغي' : 'Cancelled'),
+      }));
+      const unused = book.checks.filter(c => c.status === 'UNUSED').length;
+      const used = book.checks.filter(c => c.status === 'USED').length;
+      const cancelled = book.checks.filter(c => c.status === 'CANCELLED').length;
+      await exportTreasuryCheckbookExcel(
+        { code: book.code, bankName, bankAccount: bank?.accountNumber || '' },
+        checks,
+        { unused, used, cancelled },
+        isAr ? 'ar' : 'en'
+      );
+    } catch (err) {
+      console.error('Export checkbook error:', err);
+      window.showAlert('فشل تصدير الشيكات', 'Export failed', 'danger');
+    }
   };
 
-  // Detailed Account Statement Printing
-  const handlePrintStatement = () => {
-    if (!currentEntity) return;
-
-    const title = isAr 
-      ? `كشف حساب تفصيلي - ${currentEntityNameAr}`
-      : `Detailed Statement - ${currentEntityNameEn}`;
-
-    const rowsHTML = statementHistory.map(tx => `
-      <tr>
-        <td style="padding:8px; border-bottom:1px solid #e2e8f0; font-family:monospace; color:#2563eb;">${tx.number}</td>
-        <td style="padding:8px; border-bottom:1px solid #e2e8f0;">${tx.date}</td>
-        <td style="padding:8px; border-bottom:1px solid #e2e8f0;">${tx.type}</td>
-        <td style="padding:8px; border-bottom:1px solid #e2e8f0; text-align:right; font-family:monospace; font-weight:bold; color:#16a34a;">${tx.debit > 0 ? fmtCurrency(tx.debit, lang) : '-'}</td>
-        <td style="padding:8px; border-bottom:1px solid #e2e8f0; text-align:right; font-family:monospace; font-weight:bold; color:#dc2626;">${tx.credit > 0 ? fmtCurrency(tx.credit, lang) : '-'}</td>
-        <td style="padding:8px; border-bottom:1px solid #e2e8f0; text-align:right; font-family:monospace; font-weight:bold;">${fmtCurrency(tx.balanceAfter, lang)}</td>
-        <td style="padding:8px; border-bottom:1px solid #e2e8f0; max-width:200px; overflow:hidden; text-overflow:ellipsis;">${tx.description}</td>
-      </tr>
-    `).join('');
-
-    const html = `
-      <div class="print-page">
-        ${companyHeaderHTML()}
-        <div class="doc-title" style="background:#f8fafc; border-color:#e2e8f0;">
-          <h2>${title}</h2>
-          <div style="font-size:10px; color:#64748b; margin-top:4px;">
-            ${isAr ? `تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG-u-nu-latn')}` : `Printed on: ${new Date().toLocaleDateString()}`}
-          </div>
-        </div>
-
-        <div class="info-grid">
-          <div class="info-box">
-            <div class="label">${isAr ? 'اسم الكيان' : 'Entity Name'}</div>
-            <div class="value" style="font-weight:bold; color:#1e3a8a;">${currentEntityNameAr}</div>
-          </div>
-          <div class="info-box">
-            <div class="label">${isAr ? 'الفرع المسؤول' : 'Responsible Branch'}</div>
-            <div class="value">${currentEntity.branch || '-'}</div>
-          </div>
-          <div class="info-box">
-            <div class="label">${isAr ? 'الرصيد الحالي' : 'Current Balance'}</div>
-            <div class="value" style="font-weight:bold; color:#1e40af; font-family:monospace;">${fmtCurrency(currentEntity.balance, lang)}</div>
-          </div>
-          <div class="info-box">
-            <div class="label">${isAr ? 'المسؤول' : 'Person Responsible'}</div>
-            <div class="value">${currentEntity.responsible || '-'}</div>
-          </div>
-        </div>
-
-        <table style="width:100%; border-collapse:collapse; font-size:10px; margin-top:20px; text-align:right;">
-          <thead>
-            <tr style="background:#f1f5f9; border-bottom:2px solid #cbd5e1; font-weight:bold; color:#475569;">
-              <th style="padding:8px; text-align:right;">${isAr ? 'رقم المستند' : 'Doc No'}</th>
-              <th style="padding:8px; text-align:right;">${isAr ? 'التاريخ' : 'Date'}</th>
-              <th style="padding:8px; text-align:right;">${isAr ? 'النوع' : 'Type'}</th>
-              <th style="padding:8px; text-align:right;">${isAr ? 'وارد (مدين)' : 'Inflow (Dr)'}</th>
-              <th style="padding:8px; text-align:right;">${isAr ? 'صادر (دائن)' : 'Outflow (Cr)'}</th>
-              <th style="padding:8px; text-align:right;">${isAr ? 'الرصيد بعد' : 'Balance After'}</th>
-              <th style="padding:8px; text-align:right;">${isAr ? 'البيان والملاحظات' : 'Narrative'}</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rowsHTML}
-          </tbody>
-        </table>
-
-        ${signaturesHTML([
-          isAr ? 'أمين الخزينة' : 'Cashier',
-          isAr ? 'رئيس الحسابات' : 'Chief Accountant',
-          isAr ? 'المدير المالي' : 'CFO'
-        ])}
-
-        ${footerHTML()}
-      </div>
-    `;
-
-    printDocument(html, title);
-  };
-
-  // Export Account Statement to CSV
-  const handleExportStatement = () => {
-    if (!currentEntity) return;
-
-    const rows = statementHistory.map(tx => ({
-      'رقم المستند': tx.number,
-      'التاريخ': tx.date,
-      'النوع': tx.type,
-      'مدين (وارد)': tx.debit,
-      'دائن (صادر)': tx.credit,
-      'الرصيد المتبقي': tx.balanceAfter,
-      'البيان والتفاصيل': tx.description
-    }));
-
-    exportToCSV(rows, `statement-${currentEntity.id}`);
+  // Export Account Statement to Excel (ExcelJS professional)
+  const handleExportStatement = async () => {
+    try {
+      if (!currentEntity) return;
+      const entityName = currentEntity.isBank
+        ? (isAr ? currentEntity.bankNameAr : currentEntity.bankNameEn)
+        : (isAr ? currentEntity.nameAr : currentEntity.nameEn);
+      const entityType = currentEntity.isBank ? 'Bank' : 'Safe';
+      const transactions = statementHistory.map(tx => ({
+        number: tx.number,
+        date: tx.date,
+        type: tx.type,
+        debit: tx.debit,
+        credit: tx.credit,
+        balance: tx.balanceAfter,
+        description: tx.description,
+      }));
+      await exportTreasuryStatementExcel(entityName, entityType, transactions, statementStart, statementEnd, isAr ? 'ar' : 'en');
+    } catch (err) {
+      console.error('Export statement error:', err);
+      window.showAlert('فشل تصدير كشف الحساب', 'Statement export failed', 'danger');
+    }
   };
 
   // Get checks of selected Bank
   const availableUnusedChecks = useMemo(() => {
     if (!currentEntity || !currentEntity.isBank) return [];
-    
+
     // Find all checkbooks for this bank
     const books = (data.checkbooks || []).filter(cb => cb.bankAccountId === currentEntity.id);
     const list: number[] = [];
@@ -1105,7 +1070,7 @@ export default function TreasuryModule({
     if (!currentEntity) return [];
 
     const list: { id: string; label: string; type: 'CASHBOX' | 'BANK' }[] = [];
-    
+
     data.treasuries.forEach(t => {
       if (currentEntity.isBank || t.id !== currentEntity.id) {
         list.push({
@@ -1131,7 +1096,7 @@ export default function TreasuryModule({
 
   return (
     <div id="unified_treasury_view" className="space-y-6 overflow-y-auto max-h-[calc(100vh-4rem)] p-1 text-slate-800 dark:text-slate-200" dir={isAr ? 'rtl' : 'ltr'}>
-      
+
       {/* 1. TOP TITLE SECTION */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
         <div>
@@ -1140,8 +1105,8 @@ export default function TreasuryModule({
             <span>{isAr ? 'وحدة إدارة الخزائن والبنوك المركزية' : 'Consolidated Treasury & Corporate Banking Center'}</span>
           </h1>
           <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold mt-1">
-            {isAr 
-              ? 'إدارة التدفقات النقدية المركزية، إضافة الخزائن والبنوك الفورية، إصدار سندات المقبوضات والمدفوعات ومطابقة الشيكات' 
+            {isAr
+              ? 'إدارة التدفقات النقدية المركزية، إضافة الخزائن والبنوك الفورية، إصدار سندات المقبوضات والمدفوعات ومطابقة الشيكات'
               : 'Centralized liquidity control panel: direct ledger creation, instant voucher processing, and checkbook audit loops'}
           </p>
         </div>
@@ -1156,15 +1121,54 @@ export default function TreasuryModule({
             <span>{isAr ? 'العودة للوحة الخزائن والبنوك' : 'Back to Dashboard'}</span>
           </button>
         )}
+        {!selectedSafeId && !selectedBankId && !selectedCheckbookId && (
+          <button
+            onClick={async () => {
+              try {
+                const safes = (data.treasuries || []).map(t => ({
+                  name: isAr ? t.nameAr : t.nameEn,
+                  branch: t.branch || '',
+                  responsible: t.responsible || '',
+                  balance: Math.abs(t.balance),
+                  accountId: t.accountId || '',
+                }));
+                const banks = (data.bankAccounts || []).map(b => ({
+                  name: isAr ? b.bankNameAr : b.bankNameEn,
+                  accountNumber: b.accountNumber,
+                  branch: b.branch || '',
+                  responsible: b.responsible || '',
+                  balance: Math.abs(b.balance),
+                }));
+                const transactions = (data.moneyTransactions || []).map(tx => ({
+                  number: tx.number,
+                  date: tx.date,
+                  type: tx.type,
+                  amount: tx.amount,
+                  sourceId: tx.sourceId,
+                  destId: tx.destId,
+                  description: tx.description,
+                }));
+                await exportTreasuryDashboardExcel(safes, banks, transactions, isAr ? 'ar' : 'en');
+              } catch (err) {
+                console.error('Export treasury dashboard error:', err);
+                window.showAlert('فشل تصدير ملخص الخزائن', 'Dashboard export failed', 'danger');
+              }
+            }}
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-black rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white transition-all cursor-pointer"
+          >
+            <FileText className="h-4 w-4" />
+            <span>{isAr ? 'تصدير ملخص الخزائن Excel' : 'Export Treasury Summary'}</span>
+          </button>
+        )}
       </div>
 
       {/* 2. DASHBOARD MAIN VIEW (If nothing deep-selected) */}
       {!selectedSafeId && !selectedBankId && !selectedCheckbookId && (
         <div className="space-y-6">
-          
+
           {/* CONTROL BAR (Search + Add Buttons) */}
           <div className="flex flex-col lg:flex-row justify-between gap-4 bg-white/70 dark:bg-slate-950/40 p-4 rounded-2xl border border-[#cbdcf8] dark:border-slate-900 backdrop-blur-md">
-            
+
             {/* Search + Filter */}
             <div className="flex flex-wrap items-center gap-3 flex-1">
               <div className="relative flex-1 min-w-[200px] max-w-sm">
@@ -1184,16 +1188,15 @@ export default function TreasuryModule({
                   <button
                     key={type}
                     onClick={() => setFilterType(type)}
-                    className={`px-3.5 py-1.5 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
-                      filterType === type 
-                        ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-sky-400 shadow-sm font-black' 
+                    className={`px-3.5 py-1.5 text-[10px] font-bold rounded-md transition-all cursor-pointer ${filterType === type
+                        ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-sky-400 shadow-sm font-black'
                         : 'text-slate-500 hover:text-slate-850 dark:hover:text-slate-300'
-                    }`}
+                      }`}
                   >
                     {type === 'ALL' ? (isAr ? 'الكل' : 'All') :
-                     type === 'SAFES' ? (isAr ? 'الخزائن' : 'Safes') :
-                     type === 'BANKS' ? (isAr ? 'البنوك' : 'Banks') :
-                     (isAr ? 'دفاتر الشيكات' : 'Checkbooks')}
+                      type === 'SAFES' ? (isAr ? 'الخزائن' : 'Safes') :
+                        type === 'BANKS' ? (isAr ? 'البنوك' : 'Banks') :
+                          (isAr ? 'دفاتر الشيكات' : 'Checkbooks')}
                   </button>
                 ))}
               </div>
@@ -1231,7 +1234,7 @@ export default function TreasuryModule({
           {showAddSafeForm && (
             <form onSubmit={handleCreateSafe} className="bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-950/40 p-6 rounded-2xl space-y-4 shadow-xl">
               <div className="border-b border-slate-100 dark:border-slate-800 pb-3 flex justify-between items-center">
-                <h3 className="text-sm font-bold text-emerald-600 flex items-center gap-1.5">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                   <Coins className="h-4.5 w-4.5" />
                   <span>{isAr ? 'إنشاء خزنة نقدية جديدة وتوليد حسابها المحاسبي تلقائياً' : 'Create New Cash Safe Vault'}</span>
                 </h3>
@@ -1251,12 +1254,8 @@ export default function TreasuryModule({
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-extrabold text-slate-500 block">{isAr ? 'الفرع التابع له' : 'Branch'}</label>
-                  <select value={safeBranch} onChange={(e) => setSafeBranch(e.target.value)}
-                    className="w-full text-xs font-semibold px-3 py-2 border rounded-xl bg-slate-50 dark:bg-slate-850 dark:border-slate-800 text-slate-900 dark:text-white">
-                    <option value="main">{isAr ? 'الفرع الرئيسي' : 'Main Branch'}</option>
-                    <option value="branch1">{isAr ? 'فرع الهرم' : 'Haram Branch'}</option>
-                    <option value="branch2">{isAr ? 'فرع التجمع' : 'Tagamoa Branch'}</option>
-                  </select>
+                  <input type="text" required value={safeBranch} onChange={(e) => setSafeBranch(e.target.value)} placeholder={isAr ? 'الفرع الرئيسي' : 'Main Branch'}
+                    className="w-full text-xs font-semibold px-3 py-2 border rounded-xl bg-slate-50 dark:bg-slate-850 dark:border-slate-800 text-slate-900 dark:text-white" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-extrabold text-slate-500 block">{isAr ? 'أمين الخزينة المسؤول' : 'Responsible Person'}</label>
@@ -1310,11 +1309,8 @@ export default function TreasuryModule({
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-extrabold text-slate-500 block">{isAr ? 'الفرع المسؤول' : 'Branch'}</label>
-                  <select value={bankBranch} onChange={(e) => setBankBranch(e.target.value)}
-                    className="w-full text-xs font-semibold px-3 py-2 border rounded-xl bg-slate-50 dark:bg-slate-850 dark:border-slate-800 text-slate-900 dark:text-white">
-                    <option value="main">{isAr ? 'الفرع الرئيسي' : 'Main Branch'}</option>
-                    <option value="branch1">{isAr ? 'فرع الهرم' : 'Haram Branch'}</option>
-                  </select>
+                  <input type="text" required value={bankBranch} onChange={(e) => setBankBranch(e.target.value)} placeholder={isAr ? 'الفرع الرئيسي' : 'Main Branch'}
+                    className="w-full text-xs font-semibold px-3 py-2 border rounded-xl bg-slate-50 dark:bg-slate-850 dark:border-slate-800 text-slate-900 dark:text-white" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-extrabold text-slate-500 block">{isAr ? 'مسؤول الحساب البنكي' : 'Responsible Person'}</label>
@@ -1404,33 +1400,30 @@ export default function TreasuryModule({
                 return (
                   <div
                     key={card.id}
-                    className={`relative overflow-hidden bg-white dark:bg-slate-950 p-6 rounded-3xl border transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl ${
-                      isSafe ? 'border-emerald-100 hover:border-emerald-300 dark:border-emerald-950/40 hover:dark:border-emerald-800' :
-                      isBank ? 'border-blue-100 hover:border-blue-300 dark:border-blue-950/40 hover:dark:border-blue-800' :
-                      'border-purple-100 hover:border-purple-300 dark:border-purple-950/40 hover:dark:border-purple-800'
-                    }`}
+                    className={`relative overflow-hidden bg-white dark:bg-slate-950 p-6 rounded-3xl border transition-all duration-300 hover:-translate-y-1.5 hover:shadow-xl ${isSafe ? 'border-emerald-100 hover:border-emerald-300 dark:border-emerald-950/40 hover:dark:border-emerald-800' :
+                        isBank ? 'border-blue-100 hover:border-blue-300 dark:border-blue-950/40 hover:dark:border-blue-800' :
+                          'border-purple-100 hover:border-purple-300 dark:border-purple-950/40 hover:dark:border-purple-800'
+                      }`}
                   >
                     {/* Top Type Indicator */}
                     <div className="flex justify-between items-start mb-4">
-                      <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider ${
-                        isSafe ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400' :
-                        isBank ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' :
-                        'bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400'
-                      }`}>
+                      <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider ${isSafe ? 'bg-emerald-50 dark:bg-emerald-900/30 text-slate-900 dark:text-white dark:text-emerald-400' :
+                          isBank ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' :
+                            'bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400'
+                        }`}>
                         {isSafe ? (isAr ? 'خزينة نقدية' : 'Cash Safe') :
-                         isBank ? (isAr ? 'حساب جاري' : 'Bank Account') :
-                         (isAr ? 'دفتر شيكات' : 'Checkbook')}
+                          isBank ? (isAr ? 'حساب جاري' : 'Bank Account') :
+                            (isAr ? 'دفتر شيكات' : 'Checkbook')}
                       </span>
 
                       {/* Icon */}
-                      <div className={`p-2.5 rounded-xl ${
-                        isSafe ? 'bg-emerald-50 dark:bg-emerald-950 text-emerald-500' :
-                        isBank ? 'bg-blue-50 dark:bg-blue-950 text-blue-500' :
-                        'bg-purple-50 dark:bg-purple-950 text-purple-500'
-                      }`}>
+                      <div className={`p-2.5 rounded-xl ${isSafe ? 'bg-emerald-50 dark:bg-emerald-950 text-emerald-500' :
+                          isBank ? 'bg-blue-50 dark:bg-blue-950 text-blue-500' :
+                            'bg-purple-50 dark:bg-purple-950 text-purple-500'
+                        }`}>
                         {isSafe ? <Coins className="h-5 w-5" /> :
-                         isBank ? <Landmark className="h-5 w-5" /> :
-                         <CreditCard className="h-5 w-5" />}
+                          isBank ? <Landmark className="h-5 w-5" /> :
+                            <CreditCard className="h-5 w-5" />}
                       </div>
                     </div>
 
@@ -1448,7 +1441,7 @@ export default function TreasuryModule({
                       <span className="text-[10px] font-extrabold text-slate-400 block uppercase tracking-wider">
                         {isBook ? (isAr ? 'حالة الأوراق المالية' : 'Checks statistics') : (isAr ? 'الرصيد المتاح' : 'Available Balance')}
                       </span>
-                      <p className={`text-lg font-black font-mono mt-1 ${isBook ? 'text-purple-600 dark:text-purple-400' : (isSafe ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-600 dark:text-blue-400')}`}>
+                      <p className="text-lg font-black font-mono mt-1 text-slate-900 dark:text-white">
                         {isBook ? (isAr ? `نطاق: ${card.startNumber} - ${card.endNumber}` : `Range: ${card.startNumber} - ${card.endNumber}`) : formatCurrency(card.balance)}
                       </p>
                     </div>
@@ -1466,11 +1459,10 @@ export default function TreasuryModule({
                           else if (isBank) setSelectedBankId(card.id);
                           else setSelectedCheckbookId(card.id);
                         }}
-                        className={`flex items-center gap-1 text-[10px] font-black hover:underline cursor-pointer ${
-                          isSafe ? 'text-emerald-600 dark:text-emerald-400' :
-                          isBank ? 'text-blue-600 dark:text-blue-400' :
-                          'text-purple-600 dark:text-purple-400'
-                        }`}
+                        className={`flex items-center gap-1 text-[10px] font-black hover:underline cursor-pointer ${isSafe ? 'text-slate-900 dark:text-white dark:text-emerald-400' :
+                            isBank ? 'text-blue-600 dark:text-blue-400' :
+                              'text-purple-600 dark:text-purple-400'
+                          }`}
                       >
                         <span>{isAr ? 'إدارة العمليات والتفاصيل' : 'Manage & Details'}</span>
                         <ChevronRight className={`h-3 w-3 ${isAr ? 'rotate-180' : 'rotate-0'}`} />
@@ -1502,7 +1494,7 @@ export default function TreasuryModule({
 
         return (
           <div className="bg-white dark:bg-slate-950 p-6 rounded-3xl border border-slate-100 dark:border-slate-900 space-y-6">
-            
+
             {/* Header Details */}
             <div className="flex flex-col md:flex-row justify-between gap-4 border-b pb-4 border-slate-50 dark:border-slate-900">
               <div className="flex items-start justify-between w-full md:w-auto gap-6">
@@ -1511,7 +1503,7 @@ export default function TreasuryModule({
                     {isAr ? `دفتر شيكات: ${book.code}` : `Checkbook: ${book.code}`}
                   </h2>
                   <p className="text-slate-400 text-xs font-bold mt-1">
-                    {isAr 
+                    {isAr
                       ? `مرتبط بالبنك: ${bank ? bank.bankNameAr : ''} — النطاق الرقمي: ${book.startNumber} إلى ${book.endNumber}`
                       : `Linked with: ${bank ? bank.bankNameEn : ''} — Range: ${book.startNumber} to ${book.endNumber}`}
                   </p>
@@ -1554,22 +1546,20 @@ export default function TreasuryModule({
                   return (
                     <div
                       key={check.number}
-                      className={`p-3.5 rounded-2xl text-center border font-mono transition-all ${
-                        isUnused ? 'bg-slate-50 dark:bg-slate-900 border-slate-200/60 dark:border-slate-800' :
-                        isUsed ? 'bg-emerald-50/70 border-emerald-200 text-emerald-700 dark:bg-emerald-950/20 dark:border-emerald-900' :
-                        'bg-rose-50/70 border-rose-200 text-rose-700 dark:bg-rose-950/20 dark:border-rose-900'
-                      }`}
+                      className={`p-3.5 rounded-2xl text-center border font-mono transition-all ${isUnused ? 'bg-slate-50 dark:bg-slate-900 border-slate-200/60 dark:border-slate-800' :
+                          isUsed ? 'bg-emerald-50/70 border-emerald-200 text-emerald-700 dark:bg-emerald-950/20 dark:border-emerald-900' :
+                            'bg-rose-50/70 border-rose-200 text-rose-700 dark:bg-rose-950/20 dark:border-rose-900'
+                        }`}
                     >
                       <span className="text-xs font-black block">{check.number}</span>
-                      
-                      <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded-md mt-2 inline-block uppercase ${
-                        isUnused ? 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400' :
-                        isUsed ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30' :
-                        'bg-rose-100 text-rose-800 dark:bg-rose-900/30'
-                      }`}>
+
+                      <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded-md mt-2 inline-block uppercase ${isUnused ? 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400' :
+                          isUsed ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30' :
+                            'bg-rose-100 text-rose-800 dark:bg-rose-900/30'
+                        }`}>
                         {check.status === 'UNUSED' ? (isAr ? 'متاح' : 'Unused') :
-                         check.status === 'USED' ? (isAr ? 'صادر' : 'Issued') :
-                         (isAr ? 'ملغى' : 'Cancelled')}
+                          check.status === 'USED' ? (isAr ? 'صادر' : 'Issued') :
+                            (isAr ? 'ملغى' : 'Cancelled')}
                       </span>
 
                       {/* Cancel/Restore button for unused/cancelled checks */}
@@ -1594,14 +1584,13 @@ export default function TreasuryModule({
       {/* 4. DEEP DETAILS VIEW (For clicked Safe or Bank) */}
       {currentEntity && (
         <div className="space-y-6">
-          
+
           {/* SAFE/BANK META BANNER CARD */}
-          <div className={`p-6 rounded-3xl border bg-white dark:bg-slate-950 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 ${
-            currentEntity.isBank ? 'border-blue-100 dark:border-blue-900/40' : 'border-emerald-100 dark:border-emerald-900/40'
-          }`}>
+          <div className={`p-6 rounded-3xl border bg-white dark:bg-slate-950 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 ${currentEntity.isBank ? 'border-blue-100 dark:border-blue-900/40' : 'border-emerald-100 dark:border-emerald-900/40'
+            }`}>
             <div>
               <div className="flex items-center gap-3">
-                <div className={`p-2.5 rounded-xl ${currentEntity.isBank ? 'bg-blue-50 text-blue-600 dark:bg-slate-900' : 'bg-emerald-50 text-emerald-600 dark:bg-slate-900'}`}>
+                <div className={`p-2.5 rounded-xl ${currentEntity.isBank ? 'bg-blue-50 text-blue-600 dark:bg-slate-900' : 'bg-emerald-50 text-slate-900 dark:text-white dark:bg-slate-900'}`}>
                   {currentEntity.isBank ? <Landmark className="h-6 w-6" /> : <Coins className="h-6 w-6" />}
                 </div>
                 <div>
@@ -1634,7 +1623,7 @@ export default function TreasuryModule({
             {/* Current balance display */}
             <div className="text-start md:text-end">
               <span className="text-[10px] font-extrabold text-slate-400 block uppercase tracking-widest">{isAr ? 'الرصيد المالي الحالي للبطاقة' : 'Current Liquidity Balance'}</span>
-              <span className={`text-2xl font-black font-mono mt-1.5 block ${currentEntity.isBank ? 'text-blue-600 dark:text-sky-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+              <span className="text-2xl font-black font-mono mt-1.5 block text-slate-900 dark:text-white">
                 {formatCurrency(currentEntity.balance)}
               </span>
             </div>
@@ -1642,7 +1631,7 @@ export default function TreasuryModule({
 
           {/* MAIN GRID BLOCK: Action Buttons left, History Preview right */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            
+
             {/* OPERATIONS SELECTOR PANEL */}
             <div className="bg-white dark:bg-slate-950 p-6 rounded-3xl border border-[#cbdcf8] dark:border-slate-900 space-y-4">
               <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest block mb-1">
@@ -1653,14 +1642,13 @@ export default function TreasuryModule({
                 {/* 1. Receipt */}
                 <button
                   onClick={() => {
-                    setActiveDetailForm('RECEIPT'); 
-                    setVType(VoucherType.Receipt); 
+                    setActiveDetailForm('RECEIPT');
+                    setVType(VoucherType.Receipt);
                     setPayMethod(currentEntity.isBank ? 'BANK_TRANSFER' : 'CASH');
                     setAmount(0); setPartyId(''); setPartyName(''); setVoucherDesc(''); setVoucherRef('');
                   }}
-                  className={`p-3.5 rounded-2xl border text-center transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
-                    activeDetailForm === 'RECEIPT' ? 'bg-emerald-600/10 border-emerald-500 text-emerald-650 dark:text-emerald-400 font-black' : 'hover:bg-slate-50 dark:hover:bg-slate-900 border-slate-100 dark:border-slate-800'
-                  }`}
+                  className={`p-3.5 rounded-2xl border text-center transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${activeDetailForm === 'RECEIPT' ? 'bg-emerald-600/10 border-emerald-500 text-emerald-650 dark:text-emerald-400 font-black' : 'hover:bg-slate-50 dark:hover:bg-slate-900 border-slate-100 dark:border-slate-800'
+                    }`}
                 >
                   <TrendingUp className="h-5 w-5 text-emerald-650" />
                   <span>{isAr ? 'إذن إضافة (قبض)' : 'Receipt Voucher'}</span>
@@ -1669,14 +1657,13 @@ export default function TreasuryModule({
                 {/* 2. Payment */}
                 <button
                   onClick={() => {
-                    setActiveDetailForm('PAYMENT'); 
-                    setVType(VoucherType.Payment); 
+                    setActiveDetailForm('PAYMENT');
+                    setVType(VoucherType.Payment);
                     setPayMethod(currentEntity.isBank ? 'BANK_TRANSFER' : 'CASH');
                     setAmount(0); setPartyId(''); setPartyName(''); setVoucherDesc(''); setVoucherRef('');
                   }}
-                  className={`p-3.5 rounded-2xl border text-center transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
-                    activeDetailForm === 'PAYMENT' ? 'bg-rose-600/10 border-rose-500 text-rose-650 dark:text-rose-400 font-black' : 'hover:bg-slate-50 dark:hover:bg-slate-900 border-slate-100 dark:border-slate-800'
-                  }`}
+                  className={`p-3.5 rounded-2xl border text-center transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${activeDetailForm === 'PAYMENT' ? 'bg-rose-600/10 border-rose-500 text-rose-650 dark:text-rose-400 font-black' : 'hover:bg-slate-50 dark:hover:bg-slate-900 border-slate-100 dark:border-slate-800'
+                    }`}
                 >
                   <TrendingDown className="h-5 w-5 text-rose-650" />
                   <span>{isAr ? 'إذن صرف (دفع)' : 'Payment Voucher'}</span>
@@ -1690,9 +1677,8 @@ export default function TreasuryModule({
                     // Set default dest type
                     setTransferDestType(currentEntity.isBank ? 'BANK' : 'CASHBOX');
                   }}
-                  className={`p-3.5 rounded-2xl border text-center transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
-                    activeDetailForm === 'TRANSFER' ? 'bg-blue-600/10 border-blue-500 text-blue-600 dark:text-sky-400 font-black' : 'hover:bg-slate-50 dark:hover:bg-slate-900 border-slate-100 dark:border-slate-800'
-                  }`}
+                  className={`p-3.5 rounded-2xl border text-center transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${activeDetailForm === 'TRANSFER' ? 'bg-blue-600/10 border-blue-500 text-blue-600 dark:text-sky-400 font-black' : 'hover:bg-slate-50 dark:hover:bg-slate-900 border-slate-100 dark:border-slate-800'
+                    }`}
                 >
                   <ArrowRightLeft className="h-5 w-5 text-blue-650" />
                   <span>{isAr ? 'تحويل أرصدة' : 'Transfer Balance'}</span>
@@ -1703,9 +1689,8 @@ export default function TreasuryModule({
                   onClick={() => {
                     setActiveDetailForm('STATEMENT');
                   }}
-                  className={`p-3.5 rounded-2xl border text-center transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
-                    activeDetailForm === 'STATEMENT' ? 'bg-purple-600/10 border-purple-500 text-purple-650 dark:text-purple-400 font-black' : 'hover:bg-slate-50 dark:hover:bg-slate-900 border-slate-100 dark:border-slate-800'
-                  }`}
+                  className={`p-3.5 rounded-2xl border text-center transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${activeDetailForm === 'STATEMENT' ? 'bg-purple-600/10 border-purple-500 text-purple-650 dark:text-purple-400 font-black' : 'hover:bg-slate-50 dark:hover:bg-slate-900 border-slate-100 dark:border-slate-800'
+                    }`}
                 >
                   <FileText className="h-5 w-5 text-purple-650" />
                   <span>{isAr ? 'كشف الحساب' : 'Account Statement'}</span>
@@ -1721,18 +1706,17 @@ export default function TreasuryModule({
                     setEditResponsible(currentEntity.responsible || '');
                     setEditBankNo(currentEntity.isBank ? (currentEntity as BankAccount).accountNumber : '');
                   }}
-                  className={`p-3.5 rounded-2xl border text-center transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${
-                    activeDetailForm === 'EDIT' ? 'bg-amber-600/10 border-amber-500 text-amber-650 dark:text-amber-400 font-black' : 'hover:bg-slate-50 dark:hover:bg-slate-900 border-slate-100 dark:border-slate-800'
-                  }`}
+                  className={`p-3.5 rounded-2xl border text-center transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer ${activeDetailForm === 'EDIT' ? 'bg-amber-600/10 border-amber-500 text-amber-650 dark:text-amber-400 font-black' : 'hover:bg-slate-50 dark:hover:bg-slate-900 border-slate-100 dark:border-slate-800'
+                    }`}
                 >
-                  <Edit className="h-5 w-5 text-amber-655" />
+                  <Edit className="h-5 w-5 text-amber-600" />
                   <span>{isAr ? 'تعديل البيانات' : 'Edit Info'}</span>
                 </button>
 
                 {/* 6. Export Statement directly to Excel */}
                 <button
                   onClick={handleExportStatement}
-                  className="p-3.5 rounded-2xl border text-center hover:bg-emerald-50 dark:hover:bg-emerald-950/20 hover:border-emerald-300 border-slate-100 dark:border-slate-800 transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer text-emerald-600 dark:text-emerald-450"
+                  className="p-3.5 rounded-2xl border text-center hover:bg-emerald-50 dark:hover:bg-emerald-950/20 hover:border-emerald-300 border-slate-100 dark:border-slate-800 transition-all flex flex-col items-center justify-center gap-1.5 cursor-pointer text-slate-900 dark:text-white dark:text-emerald-450"
                 >
                   <Download className="h-5 w-5" />
                   <span>{isAr ? 'تصدير لـ Excel' : 'Export to Excel'}</span>
@@ -1743,7 +1727,7 @@ export default function TreasuryModule({
               <div className="pt-4 border-t border-slate-50 dark:border-slate-900">
                 <button
                   onClick={() => handleDeleteEntity(currentEntity.id, currentEntity.isBank ? (currentEntity as BankAccount).bankNameAr : (currentEntity as Treasury).nameAr, currentEntity.isBank)}
-                  className="w-full py-2.5 rounded-xl border border-rose-200 hover:bg-rose-50 hover:border-rose-300 dark:border-rose-950 dark:hover:bg-rose-950/20 text-rose-600 dark:text-rose-400 text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="w-full py-2.5 rounded-xl border border-rose-200 hover:bg-rose-50 hover:border-rose-300 dark:border-rose-950 dark:hover:bg-rose-950/20 text-slate-900 dark:text-white dark:text-rose-400 text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Trash2 className="h-4 w-4" />
                   <span>{isAr ? 'حذف من لوحة المتابعة' : 'Delete Safe/Bank'}</span>
@@ -1793,11 +1777,10 @@ export default function TreasuryModule({
                           </div>
                         </td>
                         <td className="py-2.5 px-3 text-start">
-                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${
-                            tx.type.includes('RECEIPT') ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-450' :
-                            tx.type.includes('PAYMENT') ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/20 dark:text-rose-450' :
-                            'bg-blue-50 text-blue-700 dark:bg-blue-950/20 dark:text-blue-450'
-                          }`}>
+                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${tx.type.includes('RECEIPT') ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-450' :
+                              tx.type.includes('PAYMENT') ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/20 dark:text-rose-450' :
+                                'bg-blue-50 text-blue-700 dark:bg-blue-950/20 dark:text-blue-450'
+                            }`}>
                             {tx.type}
                           </span>
                         </td>
@@ -1822,17 +1805,17 @@ export default function TreasuryModule({
           {/* 5. DYNAMIC COLLAPSIBLE EMBEDDED FORM SECTION */}
           {activeDetailForm !== 'NONE' && (
             <div className="bg-white dark:bg-slate-950 border border-[#cbdcf8] dark:border-slate-900 p-6 rounded-3xl shadow-xl transition-all duration-300">
-              
+
               {/* Form Title & Close */}
               <div className="border-b border-slate-100 dark:border-slate-800 pb-3 flex justify-between items-center mb-6">
                 <h3 className="text-sm font-black flex items-center gap-2">
                   <BookOpen className="h-5 w-5 text-blue-600" />
                   <span>
                     {activeDetailForm === 'RECEIPT' ? (isAr ? 'إجراء مستند إذن إضافة مالي جديد' : 'New Cash Receipt Voucher') :
-                     activeDetailForm === 'PAYMENT' ? (isAr ? 'إجراء مستند إذن صرف مالي جديد' : 'New Cash Payment Voucher') :
-                     activeDetailForm === 'TRANSFER' ? (isAr ? 'تحويل أرصدة نقدية وبنكية متبادل' : 'Inter-vault Asset Transfer') :
-                     activeDetailForm === 'EDIT' ? (isAr ? 'تعديل الخصائص والبيانات التنظيمية' : 'Edit Safe/Bank settings') :
-                     (isAr ? 'كشف حساب تفصيلي مفلتر ومصدر للتقارير' : 'Account Statement Auditor')}
+                      activeDetailForm === 'PAYMENT' ? (isAr ? 'إجراء مستند إذن صرف مالي جديد' : 'New Cash Payment Voucher') :
+                        activeDetailForm === 'TRANSFER' ? (isAr ? 'تحويل أرصدة نقدية وبنكية متبادل' : 'Inter-vault Asset Transfer') :
+                          activeDetailForm === 'EDIT' ? (isAr ? 'تعديل الخصائص والبيانات التنظيمية' : 'Edit Safe/Bank settings') :
+                            (isAr ? 'كشف حساب تفصيلي مفلتر ومصدر للتقارير' : 'Account Statement Auditor')}
                   </span>
                 </h3>
                 <button
@@ -1847,15 +1830,15 @@ export default function TreasuryModule({
               {/* A. RECEIPT / PAYMENT VOUCHER FORM */}
               {(activeDetailForm === 'RECEIPT' || activeDetailForm === 'PAYMENT') && (
                 <form onSubmit={handleSaveVoucher} className="space-y-6">
-                  
+
                   {/* Fields Grid */}
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    
+
                     {/* Auto Generated Voucher Doc Number */}
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">{isAr ? 'رقم المستند (RV/PV)' : 'Document No'}</label>
                       <input type="text" readOnly value={getNextVoucherNumber(activeDetailForm === 'RECEIPT' ? VoucherType.Receipt : VoucherType.Payment)}
-                        className="w-full text-xs font-mono font-black px-3.5 py-2.5 border rounded-xl bg-slate-50 dark:bg-slate-900 dark:border-slate-800 text-blue-650 dark:text-sky-400 focus:outline-none" />
+                        className="w-full text-xs font-mono font-black px-3.5 py-2.5 border rounded-xl bg-slate-50 dark:bg-slate-900 dark:border-slate-800 text-blue-600 dark:text-sky-400 focus:outline-none" />
                     </div>
 
                     {/* Date */}
@@ -1961,7 +1944,7 @@ export default function TreasuryModule({
                       <div className="space-y-1.5">
                         <label className="text-[10px] font-extrabold text-purple-600 dark:text-purple-400 block">{isAr ? 'اختر رقم الشيك المتوفر' : 'Select Check Number'}</label>
                         {availableUnusedChecks.length === 0 ? (
-                          <div className="text-xs text-rose-500 font-bold py-2 text-slate-900 dark:text-white">
+                          <div className="text-xs text-rose-500 font-bold py-2">
                             {isAr ? '⚠️ لا توجد دفاتر شيكات مفعلة أو لا توجد شيكات شاغرة!' : 'No checkbooks available!'}
                           </div>
                         ) : (
@@ -1983,8 +1966,8 @@ export default function TreasuryModule({
                       {/* Real upload field */}
                       <div className="space-y-1.5">
                         <label className="text-[10px] font-extrabold text-purple-650 dark:text-purple-400 block">{isAr ? 'مرفق صورة الشيك (اختياري)' : 'Upload Cheque copy'}</label>
-                        <input 
-                          type="file" 
+                        <input
+                          type="file"
                           accept="image/*"
                           onChange={(e) => {
                             const file = e.target.files?.[0];
@@ -1996,7 +1979,7 @@ export default function TreasuryModule({
                               reader.readAsDataURL(file);
                             }
                           }}
-                          className="w-full text-xs text-slate-400 file:bg-purple-100 file:border-none file:px-3 file:py-1 file:rounded-lg file:text-xs cursor-pointer" 
+                          className="w-full text-xs text-slate-400 file:bg-purple-100 file:border-none file:px-3 file:py-1 file:rounded-lg file:text-xs cursor-pointer"
                         />
                       </div>
                     </div>
@@ -2007,7 +1990,7 @@ export default function TreasuryModule({
                   {/* ────────────────────────────────────────────────────────── */}
                   <div className="bg-slate-50 dark:bg-slate-900/60 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
                     <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                      <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                      <ShieldCheck className="h-4 w-4 text-slate-900 dark:text-white" />
                       {isAr ? 'معاينة القيد المحاسبي المتولد تلقائياً (Double Entry Journal Preview)' : 'Automatic Double-Entry Journal Preview'}
                     </span>
 
@@ -2027,20 +2010,20 @@ export default function TreasuryModule({
                           </thead>
                           <tbody className="divide-y divide-slate-100 dark:divide-slate-800/40 text-slate-800 dark:text-slate-200">
                             {journalEntryPreviewLines.map((line, idx) => (
-                              <tr key={idx} className="hover:bg-slate-150/10">
+                              <tr key={line.account.code} className="hover:bg-slate-150/10">
                                 <td className="py-2 px-3 text-start font-mono text-slate-500">{line.account.code}</td>
                                 <td className="py-2 px-3 text-start text-slate-800 dark:text-white font-bold">{isAr ? line.account.nameAr : line.account.nameEn}</td>
-                                <td className="py-2 px-3 text-end font-mono font-black text-emerald-600">{line.debit > 0 ? formatCurrency(line.debit) : '-'}</td>
-                                <td className="py-2 px-3 text-end font-mono font-black text-rose-600">{line.credit > 0 ? formatCurrency(line.credit) : '-'}</td>
+                                <td className="py-2 px-3 text-end font-mono font-black text-slate-900 dark:text-white">{line.debit > 0 ? formatCurrency(line.debit) : '-'}</td>
+                                <td className="py-2 px-3 text-end font-mono font-black text-slate-900 dark:text-white">{line.credit > 0 ? formatCurrency(line.credit) : '-'}</td>
                                 <td className="py-2 px-3 text-start text-slate-400 truncate max-w-[200px]">{line.desc}</td>
                               </tr>
                             ))}
                             {/* Totals row */}
                             <tr className="font-black bg-slate-100/50 dark:bg-slate-900/60 text-slate-900 dark:text-white border-t border-slate-300 dark:border-slate-800">
                               <td colSpan={2} className="py-2 px-3 text-start">{isAr ? 'إجمالي أطراف القيد' : 'Balanced Sum'}</td>
-                              <td className="py-2 px-3 text-end font-mono text-emerald-600">{formatCurrency(amount)}</td>
-                              <td className="py-2 px-3 text-end font-mono text-emerald-600">{formatCurrency(amount)}</td>
-                              <td className="py-2 px-3 text-start text-emerald-600 flex items-center gap-1">
+                              <td className="py-2 px-3 text-end font-mono text-slate-900 dark:text-white">{formatCurrency(amount)}</td>
+                              <td className="py-2 px-3 text-end font-mono text-slate-900 dark:text-white">{formatCurrency(amount)}</td>
+                              <td className="py-2 px-3 text-start text-slate-900 dark:text-white flex items-center gap-1">
                                 <Check className="h-4.5 w-4.5" />
                                 <span>{isAr ? 'متزن ومطابق' : 'Balanced'}</span>
                               </td>
@@ -2053,7 +2036,7 @@ export default function TreasuryModule({
 
                   {/* Actions buttons */}
                   <div className="flex gap-2 justify-end pt-2">
-                    <button type="submit" className="bg-emerald-650 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 px-6 rounded-xl shadow-lg shadow-emerald-500/15 cursor-pointer">
+                    <button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 px-6 rounded-xl shadow-lg shadow-emerald-500/15 cursor-pointer">
                       {isAr ? 'اعتماد وحفظ المستند والترحيل المحاسبي' : 'Save & Post Journal'}
                     </button>
                     <button type="button" onClick={() => setActiveDetailForm('NONE')} className="bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-850 dark:text-slate-300 font-bold text-xs py-2.5 px-4 rounded-xl cursor-pointer">
@@ -2066,20 +2049,20 @@ export default function TreasuryModule({
               {/* B. TRANSFER FORM */}
               {activeDetailForm === 'TRANSFER' && (
                 <form onSubmit={handleSaveTransfer} className="space-y-6">
-                  
+
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-slate-900 dark:text-white">
                     {/* Source */}
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-extrabold text-slate-400 block">{isAr ? 'المصدر (حالي)' : 'Source'}</label>
                       <input type="text" readOnly value={currentEntity.nameAr || currentEntity.bankNameAr}
-                        className="w-full text-xs font-bold px-3.5 py-2.5 border rounded-xl bg-slate-50 dark:bg-slate-900 text-slate-450 dark:border-slate-800 focus:outline-none" />
+                        className="w-full text-xs font-bold px-3.5 py-2.5 border rounded-xl bg-slate-50 dark:bg-slate-900 text-slate-500 dark:border-slate-800 focus:outline-none" />
                     </div>
 
                     {/* Destination Type */}
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-extrabold text-slate-400 block">{isAr ? 'نوع الكيان المستهدف' : 'Target Type'}</label>
                       <select value={transferDestType} onChange={(e) => { setTransferDestType(e.target.value as any); setTransferDestId(''); }}
-                        className="w-full text-xs font-semibold px-3.5 py-2.5 border rounded-xl bg-slate-50 dark:bg-slate-900 dark:border-slate-800 focus:outline-none">
+                        className="w-full text-xs font-semibold px-3.5 py-2.5 border rounded-xl bg-slate-50 dark:bg-slate-900 dark:border-slate-800 text-slate-900 dark:text-white focus:outline-none">
                         <option value="CASHBOX">{isAr ? 'خزنة نقدية' : 'Cashbox Vault'}</option>
                         <option value="BANK">{isAr ? 'حساب بنكي' : 'Bank Account'}</option>
                       </select>
@@ -2089,7 +2072,7 @@ export default function TreasuryModule({
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-extrabold text-slate-400 block">{isAr ? 'اختر الخزينة / البنك المستهدف' : 'Select Target Vault'}</label>
                       <select required value={transferDestId} onChange={(e) => setTransferDestId(e.target.value)}
-                        className="w-full text-xs font-semibold px-3.5 py-2.5 border rounded-xl bg-slate-50 dark:bg-slate-900 dark:border-slate-800 focus:outline-none">
+                        className="w-full text-xs font-semibold px-3.5 py-2.5 border rounded-xl bg-slate-50 dark:bg-slate-900 dark:border-slate-800 text-slate-900 dark:text-white focus:outline-none">
                         <option value="">{isAr ? '-- اختر --' : '-- Select --'}</option>
                         {otherTransferDestinations
                           .filter(dest => dest.type === transferDestType)
@@ -2101,7 +2084,7 @@ export default function TreasuryModule({
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-extrabold text-slate-400 block">{isAr ? 'مبلغ التحويل' : 'Transfer Amount'}</label>
                       <input type="number" required min="1" max={currentEntity.balance} value={transferAmount || ''} onChange={(e) => setTransferAmount(Number(e.target.value))}
-                        className="w-full text-xs font-mono font-bold px-3.5 py-2 border rounded-xl bg-slate-50 dark:bg-slate-900 dark:border-slate-800 focus:outline-none" />
+                        className="w-full text-xs font-mono font-bold px-3.5 py-2 border rounded-xl bg-slate-50 dark:bg-slate-900 dark:border-slate-800 text-slate-900 dark:text-white focus:outline-none" />
                     </div>
                   </div>
 
@@ -2115,7 +2098,7 @@ export default function TreasuryModule({
                   {/* TRANSFER JOURNAL PREVIEW */}
                   <div className="bg-slate-50 dark:bg-slate-900/60 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
                     <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                      <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                      <ShieldCheck className="h-4 w-4 text-slate-900 dark:text-white" />
                       {isAr ? 'معاينة قيد تحويل الأرصدة المزدوج' : 'Double-Entry Transfer Journal Preview'}
                     </span>
 
@@ -2135,20 +2118,20 @@ export default function TreasuryModule({
                           </thead>
                           <tbody className="divide-y divide-slate-100 dark:divide-slate-800/40 text-slate-800 dark:text-slate-200">
                             {transferJournalPreviewLines.map((line, idx) => (
-                              <tr key={idx} className="hover:bg-slate-150/10">
+                              <tr key={line.account.code} className="hover:bg-slate-150/10">
                                 <td className="py-2 px-3 text-start font-mono text-slate-500">{line.account.code}</td>
                                 <td className="py-2 px-3 text-start text-slate-800 dark:text-white font-bold">{isAr ? line.account.nameAr : line.account.nameEn}</td>
-                                <td className="py-2 px-3 text-end font-mono font-black text-emerald-600">{line.debit > 0 ? formatCurrency(line.debit) : '-'}</td>
-                                <td className="py-2 px-3 text-end font-mono font-black text-rose-600">{line.credit > 0 ? formatCurrency(line.credit) : '-'}</td>
+                                <td className="py-2 px-3 text-end font-mono font-black text-slate-900 dark:text-white">{line.debit > 0 ? formatCurrency(line.debit) : '-'}</td>
+                                <td className="py-2 px-3 text-end font-mono font-black text-slate-900 dark:text-white">{line.credit > 0 ? formatCurrency(line.credit) : '-'}</td>
                                 <td className="py-2 px-3 text-start text-slate-400 truncate max-w-[200px]">{line.desc}</td>
                               </tr>
                             ))}
                             {/* Totals row */}
                             <tr className="font-black bg-slate-100/50 dark:bg-slate-900/60 text-slate-900 dark:text-white border-t border-slate-300 dark:border-slate-800">
                               <td colSpan={2} className="py-2 px-3 text-start">{isAr ? 'إجمالي أطراف القيد' : 'Balanced Sum'}</td>
-                              <td className="py-2 px-3 text-end font-mono text-emerald-600">{formatCurrency(transferAmount)}</td>
-                              <td className="py-2 px-3 text-end font-mono text-emerald-600">{formatCurrency(transferAmount)}</td>
-                              <td className="py-2 px-3 text-start text-emerald-600 flex items-center gap-1">
+                              <td className="py-2 px-3 text-end font-mono text-slate-900 dark:text-white">{formatCurrency(transferAmount)}</td>
+                              <td className="py-2 px-3 text-end font-mono text-slate-900 dark:text-white">{formatCurrency(transferAmount)}</td>
+                              <td className="py-2 px-3 text-start text-slate-900 dark:text-white flex items-center gap-1">
                                 <Check className="h-4.5 w-4.5" />
                                 <span>{isAr ? 'متزن ومطابق' : 'Balanced'}</span>
                               </td>
@@ -2160,7 +2143,7 @@ export default function TreasuryModule({
                   </div>
 
                   <div className="flex gap-2 justify-end pt-2">
-                    <button type="submit" className="bg-blue-650 hover:bg-blue-700 text-white font-bold text-xs py-2.5 px-6 rounded-xl shadow-lg cursor-pointer">
+                    <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-2.5 px-6 rounded-xl shadow-lg cursor-pointer">
                       {isAr ? 'تنفيذ وترحيل القيد للتحويل' : 'Execute & Post Transfer'}
                     </button>
                     <button type="button" onClick={() => setActiveDetailForm('NONE')} className="bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-850 dark:text-slate-300 font-bold text-xs py-2.5 px-4 rounded-xl cursor-pointer">
@@ -2191,13 +2174,9 @@ export default function TreasuryModule({
                         className="w-full text-xs font-semibold px-3 py-1.5 rounded-lg border bg-white dark:bg-slate-950 text-slate-900 dark:text-white focus:outline-none" />
                     </div>
                     <div className="flex items-end gap-2">
-                      <button onClick={handlePrintStatement} className="flex-1 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1 shadow-sm cursor-pointer">
-                        <Printer className="h-3.5 w-3.5" />
-                        <span>{isAr ? 'طباعة' : 'Print'}</span>
-                      </button>
-                      <button onClick={handleExportStatement} className="flex-1 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1 shadow-sm cursor-pointer">
-                        <Download className="h-3.5 w-3.5" />
-                        <span>Excel</span>
+                      <button onClick={handleExportStatement} className="flex-1 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 shadow-sm cursor-pointer">
+                        <FileSpreadsheet className="h-3.5 w-3.5" />
+                        <span>{isAr ? 'تصدير كشف الحساب إلى Excel' : 'Export Statement to Excel'}</span>
                       </button>
                     </div>
                   </div>
@@ -2241,16 +2220,15 @@ export default function TreasuryModule({
                             </td>
                             <td className="py-2 px-3 text-start font-mono text-slate-500">{tx.date}</td>
                             <td className="py-2 px-3 text-start">
-                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${
-                                tx.type.includes('RECEIPT') ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20' :
-                                tx.type.includes('PAYMENT') ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/20' :
-                                'bg-blue-50 text-blue-700 dark:bg-blue-950/20'
-                              }`}>
+                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${tx.type.includes('RECEIPT') ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20' :
+                                  tx.type.includes('PAYMENT') ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/20' :
+                                    'bg-blue-50 text-blue-700 dark:bg-blue-950/20'
+                                }`}>
                                 {tx.type}
                               </span>
                             </td>
-                            <td className="py-2 px-3 text-end font-mono text-emerald-600 font-black">{tx.debit > 0 ? formatCurrency(tx.debit) : '-'}</td>
-                            <td className="py-2 px-3 text-end font-mono text-rose-600 font-black">{tx.credit > 0 ? formatCurrency(tx.credit) : '-'}</td>
+                            <td className="py-2 px-3 text-end font-mono text-slate-900 dark:text-white font-black">{tx.debit > 0 ? formatCurrency(tx.debit) : '-'}</td>
+                            <td className="py-2 px-3 text-end font-mono text-slate-900 dark:text-white font-black">{tx.credit > 0 ? formatCurrency(tx.credit) : '-'}</td>
                             <td className="py-2 px-3 text-end font-mono text-slate-900 dark:text-white font-black">{formatCurrency(tx.balanceAfter)}</td>
                             <td className="py-2 px-3 text-start text-slate-600 dark:text-slate-400 max-w-[250px] truncate" title={tx.description}>{tx.description}</td>
                           </tr>
@@ -2320,7 +2298,7 @@ export default function TreasuryModule({
 
       {/* Cheque Image Preview Modal */}
       {previewChequeImage && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-[9999] p-4">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-9999 p-4">
           <div className="bg-white dark:bg-slate-950 p-6 rounded-3xl border border-slate-250 dark:border-slate-800 max-w-2xl w-full relative">
             <div className="flex justify-between items-center mb-4 border-b pb-2 border-slate-100 dark:border-slate-850">
               <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">

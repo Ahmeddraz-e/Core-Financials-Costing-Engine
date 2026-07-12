@@ -89,6 +89,8 @@ export function authenticateUser(db: Database.Database, username: string, passwo
 
   // Clean up expired sessions
   db.prepare("DELETE FROM sessions WHERE expiresAt < datetime('now')").run();
+  // Invalidate all previous sessions for this user (one active session per user)
+  deleteAllUserSessions(db, user.id);
 
   // Create new session (24 hours)
   const sessionId = generateId('sess');

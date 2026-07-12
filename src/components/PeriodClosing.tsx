@@ -22,8 +22,10 @@ export default function PeriodClosing({
 
   const periods = data.accountingPeriods || [];
   
-  const formatCurrency = (val: number) =>
-    new Intl.NumberFormat(isAr ? 'ar-EG' : 'en-US', { style: 'currency', currency: 'EGP' }).format(val);
+  const formatCurrency = (val: number) => {
+    const formattedNum = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(val);
+    return isAr ? `${formattedNum} ج.م` : `${formattedNum} EGP`;
+  }
 
   const getAccountBalances = (typeFilter: string[]) => {
     return data.accounts.filter(a => typeFilter.includes(a.type) && a.balance !== 0);
@@ -93,7 +95,7 @@ export default function PeriodClosing({
       id: jeId,
       entryNumber: `JV-CLS-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`,
       date: new Date().toISOString().split('T')[0],
-      type: JournalEntryType.Auto,
+      type: JournalEntryType.Closing,
       description: isAr ? `قيد إقفال الفترة ${selectedMonth}/${selectedYear}` : `Closing Entry for ${selectedMonth}/${selectedYear}`,
       lines: jeLines,
       approved: true,

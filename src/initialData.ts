@@ -9,6 +9,7 @@ export const initialERPData: ERPData = {
     { id: '104', code: '1104001', nameAr: 'مخزن المواد الغذائية والمشروبات', nameEn: 'Food & Beverage Inventory', type: AccountType.Asset, parentCode: null, balance: 0 },
     { id: '105', code: '1105001', nameAr: 'مخزن مواد التعبئة والتغليف', nameEn: 'Packaging Inventory', type: AccountType.Asset, parentCode: null, balance: 0 },
     { id: '106', code: '1201001', nameAr: 'أصول ثابتة - معدات مطبخ', nameEn: 'Fixed Assets - Kitchen Equipment', type: AccountType.Asset, parentCode: null, balance: 0 },
+    { id: '107', code: '1106001', nameAr: 'سلف وعُهد الموظفين', nameEn: 'Staff Advances & Loans', type: AccountType.Asset, parentCode: null, balance: 0 },
 
     // Liabilities (2xxx)
     { id: '201', code: '2101001', nameAr: 'الموردين - حسابات دائنة', nameEn: 'Accounts Payable (Suppliers)', type: AccountType.Liability, parentCode: null, balance: 0 },
@@ -24,6 +25,8 @@ export const initialERPData: ERPData = {
     { id: '402', code: '4102001', nameAr: 'مبيعات التيك أواي', nameEn: 'Takeaway Sales', type: AccountType.Revenue, parentCode: null, balance: 0 },
     { id: '403', code: '4103001', nameAr: 'مبيعات التوصيل (دليفري)', nameEn: 'Direct Delivery Sales', type: AccountType.Revenue, parentCode: null, balance: 0 },
     { id: '404', code: '4104001', nameAr: 'مبيعات تطبيقات التوصيل', nameEn: 'Third-Party App Sales', type: AccountType.Revenue, parentCode: null, balance: 0 },
+    { id: '405', code: '4107001', nameAr: 'إيراد غرامات وجزاءات الموظفين', nameEn: 'Employee Penalties Income', type: AccountType.Revenue, parentCode: null, balance: 0 },
+    { id: '406', code: '4108001', nameAr: 'خصم المبيعات والمسموحات', nameEn: 'Sales Discounts & Allowances', type: AccountType.Revenue, parentCode: null, balance: 0 },
 
     // Cost Of Sales (5xxx)
     { id: '501', code: '5101001', nameAr: 'تكلفة المواد الغذائية المستهلكة', nameEn: 'Cost of Food Used', type: AccountType.CostOfSales, parentCode: null, balance: 0 },
@@ -36,7 +39,8 @@ export const initialERPData: ERPData = {
     { id: '602', code: '6102001', nameAr: 'مصروفات الإيجار', nameEn: 'Rent Expense', type: AccountType.Expense, parentCode: null, balance: 0 },
     { id: '603', code: '6103001', nameAr: 'مصروف كهرباء ومياه وغاز', nameEn: 'Utilities (Electricity, Water, Gas)', type: AccountType.Expense, parentCode: null, balance: 0 },
     { id: '604', code: '6104001', nameAr: 'مصروفات التسويق والدعاية', nameEn: 'Marketing & Advertising', type: AccountType.Expense, parentCode: null, balance: 0 },
-    { id: '605', code: '6105001', nameAr: 'مصروف إهلاك أصول ثابتة', nameEn: 'Depreciation Expense', type: AccountType.Expense, parentCode: null, balance: 0 }
+    { id: '605', code: '6105001', nameAr: 'مصروف إهلاك أصول ثابتة', nameEn: 'Depreciation Expense', type: AccountType.Expense, parentCode: null, balance: 0 },
+    { id: '606', code: '6106001', nameAr: 'مصروف البدلات والإضافات', nameEn: 'Allowances Expense', type: AccountType.Expense, parentCode: null, balance: 0 }
   ],
   journalEntries: [],
   purchases: [],
@@ -70,5 +74,17 @@ export const initialERPData: ERPData = {
   purchaseReturns: [],
   payrollRuns: [],
   accountingPeriods: [],
-  checkbooks: []
+  checkbooks: [],
+  companyProfile: {
+    nameAr: 'لودينغ للأغذية',
+    nameEn: 'LODing Foods',
+    registrationNumber: 'ERP-2026-01',
+    taxNumber: '123456789',
+    addressAr: '123 شارع المهندسين، الجيزة',
+    addressEn: 'Mohandessin St, Giza 123',
+    email: 'info@loding-erp.com',
+    phone: '+20 2 1234 5678',
+    branches: 'الفرع الرئيسي, فرع الدقي, فرع مدينة نصر',
+    zakatRate: 15
+  }
 };

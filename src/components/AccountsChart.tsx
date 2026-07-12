@@ -1,16 +1,59 @@
 import React, { useState } from 'react';
-import { FolderTree, Plus, Search, HelpCircle, Save, Trash2, CheckCircle, FolderPlus } from 'lucide-react';
-import { ERPData, Account, AccountType } from '../types';
+import { FolderTree, Plus, Search, HelpCircle, Save, Trash2, CheckCircle, FolderPlus, X, Edit, ShieldAlert } from 'lucide-react';
+import { ERPData, Account, AccountType, Treasury, BankAccount } from '../types';
 
 interface AccountsChartProps {
   data: ERPData;
   lang: 'ar' | 'en';
   onUpdateAccounts: (accounts: Account[]) => void;
+  onUpdateTreasuries?: (treasuries: Treasury[]) => void;
+  onUpdateBankAccounts?: (bankAccounts: BankAccount[]) => void;
+  onUpdateCheckbooks?: (checkbooks: any[]) => void;
   onAddAuditLog: (actionAr: string, actionEn: string, details: string) => void;
 }
 
-export default function AccountsChart({ data, lang, onUpdateAccounts, onAddAuditLog }: AccountsChartProps) {
+export default function AccountsChart({ data, lang, onUpdateAccounts, onUpdateTreasuries, onUpdateBankAccounts, onUpdateCheckbooks, onAddAuditLog }: AccountsChartProps) {
   const isAr = lang === 'ar';
+
+  // Fallback accountId resolution (mirrors Treasury.tsx logic)
+  const getTreasuryAccId = (t: Treasury) => t.accountId || (t.id === 'cb-1' ? '101' : '');
+  const getBankAccId = (b: BankAccount) => b.accountId || (b.id === 'ba-1' ? '102' : '');
+
+  // Match linked treasury by accountId or by name pattern
+  const findLinkedTreasury = (account: Account) => {
+    let linked = data.treasuries.find(t => getTreasuryAccId(t) === account.id);
+    if (!linked) {
+      const name = isAr ? account.nameAr : account.nameEn;
+      const prefixAr = 'حساب خزينة - ';
+      const prefixEn = 'Cash Box - ';
+      const prefix = isAr ? prefixAr : prefixEn;
+      if (name.startsWith(prefix)) {
+        const stripped = name.slice(prefix.length);
+        linked = data.treasuries.find(t =>
+          (isAr ? t.nameAr : t.nameEn) === stripped
+        );
+      }
+    }
+    return linked;
+  };
+
+  // Match linked bankAccount by accountId or by name pattern
+  const findLinkedBank = (account: Account) => {
+    let linked = data.bankAccounts.find(b => getBankAccId(b) === account.id);
+    if (!linked) {
+      const name = isAr ? account.nameAr : account.nameEn;
+      const prefixAr = 'حساب بنك - ';
+      const prefixEn = 'Bank - ';
+      const prefix = isAr ? prefixAr : prefixEn;
+      if (name.startsWith(prefix)) {
+        const stripped = name.slice(prefix.length);
+        linked = data.bankAccounts.find(b =>
+          (isAr ? b.bankNameAr : b.bankNameEn) === stripped
+        );
+      }
+    }
+    return linked;
+  };
   const [searchTerm, setSearchTerm] = useState('');
   const [activeGroup, setActiveGroup] = useState<AccountType | 'ALL'>('ALL');
 
@@ -31,6 +74,113 @@ export default function AccountsChart({ data, lang, onUpdateAccounts, onAddAudit
   const [newType, setNewType] = useState<AccountType>(AccountType.Asset);
   const [newParentCode, setNewParentCode] = useState('');
   const [newBalance, setNewBalance] = useState(0);
+
+  // Edit account state
+  const [editingAccount, setEditingAccount] = useState<Account | null>(null);
+  const [editCode, setEditCode] = useState('');
+  const [editNameAr, setEditNameAr] = useState('');
+  const [editNameEn, setEditNameEn] = useState('');
+  const [editType, setEditType] = useState<AccountType>(AccountType.Asset);
+  const [editParentCode, setEditParentCode] = useState('');
+  const [editBalance, setEditBalance] = useState(0);
+
+  // Custom alert & confirmation modal states
+  const [alertModal, setAlertModal] = useState<{ show: boolean; title: string; message: string; type?: 'info' | 'success' | 'warning' | 'error' }>({ show: false, title: '', message: '', type: 'info' });
+  const [confirmModal, setConfirmModal] = useState<{ show: boolean; title: string; message: string; onConfirm: () => void }>({ show: false, title: '', message: '', onConfirm: () => {} });
+
+  const showAlert = (title: string, message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
+    setAlertModal({ show: true, title, message, type });
+  };
+
+  const showConfirm = (title: string, message: string, onConfirm: () => void) => {
+    setConfirmModal({ show: true, title, message, onConfirm });
+  };
+
+  const handleStartEdit = (acc: Account) => {
+    setEditingAccount(acc);
+    setEditCode(acc.code);
+    setEditNameAr(acc.nameAr);
+    setEditNameEn(acc.nameEn);
+    setEditType(acc.type);
+    setEditParentCode(acc.parentCode || '');
+    setEditBalance(acc.balance);
+  };
+
+  const handleSaveEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAccount || !editCode || !editNameAr || !editNameEn) return;
+
+    if (editCode !== editingAccount.code && data.accounts.some(a => a.code === editCode && a.id !== editingAccount.id)) {
+      showAlert(
+        isAr ? 'خطأ' : 'Error',
+        isAr ? 'كود الحساب الجديد مسجل مسبقاً لحساب آخر!' : 'The new account code is already taken by another account!',
+        'error'
+      );
+      return;
+    }
+
+    const oldCode = editingAccount.code;
+
+    // Propagate changes to parent references
+    const updatedAccounts = data.accounts.map(acc => {
+      if (acc.id === editingAccount.id) {
+        return {
+          ...acc,
+          code: editCode,
+          nameAr: editNameAr,
+          nameEn: editNameEn,
+          type: editType,
+          parentCode: editParentCode || null,
+          balance: Number(editBalance)
+        };
+      }
+      if (acc.parentCode === oldCode) {
+        return { ...acc, parentCode: editCode };
+      }
+      return acc;
+    }).sort((a, b) => a.code.localeCompare(b.code));
+
+    onUpdateAccounts(updatedAccounts);
+
+    // Sync linked Treasury (safe) name
+    if (onUpdateTreasuries) {
+      const linkedTreasury = findLinkedTreasury(editingAccount);
+      if (linkedTreasury) {
+        const updatedTreasuries = data.treasuries.map(t =>
+          t.id === linkedTreasury.id
+            ? { ...t, nameAr: editNameAr, nameEn: editNameEn, balance: Number(editBalance) }
+            : t
+        );
+        onUpdateTreasuries(updatedTreasuries);
+      }
+    }
+
+    // Sync linked BankAccount name
+    if (onUpdateBankAccounts) {
+      const linkedBank = findLinkedBank(editingAccount);
+      if (linkedBank) {
+        const updatedBanks = data.bankAccounts.map(b =>
+          b.id === linkedBank.id
+            ? { ...b, bankNameAr: editNameAr, bankNameEn: editNameEn, balance: Number(editBalance) }
+            : b
+        );
+        onUpdateBankAccounts(updatedBanks);
+      }
+    }
+
+    onAddAuditLog(
+      `تعديل حساب: ${editNameAr}`,
+      `Updated Account: ${editNameEn}`,
+      `تم تعديل بيانات الحساب ذو الكود ${oldCode} (الكود الجديد: ${editCode}) ورصيده الجديد ${editBalance} ج.م.`
+    );
+
+    setEditingAccount(null);
+    showAlert(
+      isAr ? 'تم تعديل الحساب' : 'Account Updated',
+      isAr ? '✅ تم حفظ تعديلات الحساب الشجري بنجاح!' : 'Account details updated successfully!',
+      'success'
+    );
+  };
 
   // Group translations
   const groupLabels: Record<AccountType, { ar: string; en: string }> = {
@@ -66,7 +216,8 @@ export default function AccountsChart({ data, lang, onUpdateAccounts, onAddAudit
       nameEn: newNameEn,
       type: newType,
       parentCode: newParentCode || null,
-      balance: Number(newBalance) || 0
+      balance: Number(newBalance) || 0,
+      isSystem: false
     };
 
     const updatedAccounts = [...data.accounts, newAcc].sort((a, b) => a.code.localeCompare(b.code));
@@ -110,16 +261,59 @@ export default function AccountsChart({ data, lang, onUpdateAccounts, onAddAudit
   };
 
   const handleDeleteAccount = (id: string, name: string) => {
-    window.showConfirm(
-      `هل أنت متأكد من حذف الحساب "${name}"؟`,
-      `Are you sure you want to delete "${name}"?`,
+    const accToDelete = data.accounts.find(a => a.id === id);
+    if (!accToDelete) return;
+
+    const linkedTreasury = findLinkedTreasury(accToDelete);
+    const linkedBank = findLinkedBank(accToDelete);
+    const linkedNames: string[] = [];
+    if (linkedTreasury) linkedNames.push(isAr ? linkedTreasury.nameAr : linkedTreasury.nameEn);
+    if (linkedBank) linkedNames.push(isAr ? linkedBank.bankNameAr : linkedBank.bankNameEn);
+
+    showConfirm(
+      isAr ? 'تأكيد حذف الحساب' : 'Confirm Account Deletion',
+      isAr
+        ? `هل أنت متأكد من حذف الحساب "${name}" نهائياً؟ سيتم فك ارتباط مرجعيات الحسابات التابعة له.${linkedNames.length ? ` ⚠️ سيتم أيضاً حذف السجلات المرتبطة: ${linkedNames.join('، ')}` : ''}`
+        : `Are you sure you want to permanently delete account "${name}"? Children accounts will be unlinked.${linkedNames.length ? ` ⚠️ Linked records will also be deleted: ${linkedNames.join(', ')}` : ''}`,
       () => {
-        const updatedAccounts = data.accounts.filter(a => a.id !== id);
+        const deletedCode = accToDelete.code;
+        const deletedParentCode = accToDelete.parentCode;
+
+        // Propagate child accounts parent updates
+        const updatedAccounts = data.accounts
+          .filter(a => a.id !== id)
+          .map(acc => {
+            if (acc.parentCode === deletedCode) {
+              return { ...acc, parentCode: deletedParentCode };
+            }
+            return acc;
+          });
+
         onUpdateAccounts(updatedAccounts);
+
+        // Remove linked Treasury if any
+        if (linkedTreasury && onUpdateTreasuries) {
+          onUpdateTreasuries(data.treasuries.filter(t => t.id !== linkedTreasury.id));
+        }
+
+        // Remove linked BankAccount if any
+        if (linkedBank && onUpdateBankAccounts) {
+          onUpdateBankAccounts(data.bankAccounts.filter(b => b.id !== linkedBank.id));
+          // Also remove linked checkbooks
+          if (onUpdateCheckbooks) {
+            onUpdateCheckbooks((data.checkbooks || []).filter(c => c.bankAccountId !== linkedBank.id));
+          }
+        }
+
         onAddAuditLog(
           `حذف حساب: ${name}`,
           `Deleted Account: ${name}`,
-          `تم حذف حساب مالي فرعي من دليل الحسابات.`
+          `تم حذف الحساب ذو الكود ${deletedCode} من دليل الحسابات وتحديث مرجعيات الحسابات التابعة.`
+        );
+        showAlert(
+          isAr ? 'تم الحذف' : 'Deleted',
+          isAr ? '👤 تم حذف الحساب بنجاح!' : 'Account deleted successfully!',
+          'success'
         );
       }
     );
@@ -402,14 +596,14 @@ export default function AccountsChart({ data, lang, onUpdateAccounts, onAddAudit
                         acc.type === AccountType.Liability ? 'bg-amber-500/10 text-amber-600' :
                         acc.type === AccountType.Equity ? 'bg-violet-500/10 text-violet-600' :
                         acc.type === AccountType.Revenue ? 'bg-emerald-500/10 text-emerald-600' :
-                        acc.type === AccountType.CostOfSales ? 'bg-rose-500/10 text-rose-600' :
+                        acc.type === AccountType.CostOfSales ? 'bg-rose-500/10 text-slate-900 dark:text-white' :
                         'bg-slate-500/10 text-slate-600'
                       }`}>
                         {isAr ? groupLabels[acc.type].ar.split(' ')[0] : groupLabels[acc.type].en.split(' ')[0]}
                       </span>
                     </td>
                     <td className="py-3 px-4 text-end font-mono text-[11px] font-bold">
-                      <span className={balanceVal < 0 ? 'text-rose-600' : 'text-slate-950 dark:text-white'}>
+                      <span className={balanceVal < 0 ? 'text-slate-900 dark:text-white' : 'text-slate-950 dark:text-white'}>
                         {formatCurrency(balanceVal)}
                       </span>
                       <span className="text-[9px] text-slate-400 font-bold ml-1">
@@ -419,11 +613,15 @@ export default function AccountsChart({ data, lang, onUpdateAccounts, onAddAudit
                     <td className="py-3 px-4 text-center">
                       <div className="flex items-center justify-center gap-1.5">
                         <button
-                          disabled={acc.isSystem}
+                          onClick={() => handleStartEdit(acc)}
+                          className="p-1 rounded hover:bg-blue-500/10 text-slate-400 hover:text-blue-600 transition-colors cursor-pointer"
+                          title={isAr ? 'تعديل الحساب' : 'Edit Account Details'}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </button>
+                        <button
                           onClick={() => handleDeleteAccount(acc.id, isAr ? acc.nameAr : acc.nameEn)}
-                          className={`p-1 rounded hover:bg-rose-500/10 text-slate-400 hover:text-rose-600 transition-colors ${
-                            acc.isSystem ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'
-                          }`}
+                          className="p-1 rounded hover:bg-rose-500/10 text-slate-400 hover:text-slate-900 dark:text-white transition-colors cursor-pointer"
                           title={isAr ? 'حذف الحساب' : 'Remove GL Account'}
                         >
                           <Trash2 className="h-4 w-4" />
@@ -436,8 +634,123 @@ export default function AccountsChart({ data, lang, onUpdateAccounts, onAddAudit
             </tbody>
           </table>
         </div>
-
       </div>
+
+      {/* Edit Account Modal */}
+      {editingAccount && (
+        <div className="fixed inset-0 bg-slate-950/45 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-850 rounded-3xl shadow-2xl w-full max-w-sm text-start overflow-hidden flex flex-col text-xs font-semibold">
+            <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-100 dark:border-slate-850 flex justify-between items-center shrink-0">
+              <span className="font-black text-slate-900 dark:text-white uppercase tracking-wider">{isAr ? 'تعديل بيانات الحساب' : 'Edit Account Details'}</span>
+              <button onClick={() => setEditingAccount(null)} className="text-slate-400 hover:text-slate-655 cursor-pointer"><X className="h-4 w-4" /></button>
+            </div>
+            <form onSubmit={handleSaveEdit} className="p-6 space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-600 block">{isAr ? 'كود الحساب' : 'Account Code'} *</label>
+                <input type="text" required value={editCode} onChange={(e) => setEditCode(e.target.value)} className="w-full text-xs font-mono font-bold py-2 px-3 rounded-xl border bg-white dark:bg-slate-950 text-slate-900 dark:text-white" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-600 block">{isAr ? 'الاسم بالكامل (عربي) *' : 'Full Name (AR) *'}</label>
+                <input type="text" required value={editNameAr} onChange={(e) => setEditNameAr(e.target.value)} className="w-full text-xs font-semibold py-2 px-3 rounded-xl border bg-white dark:bg-slate-950 text-slate-900 dark:text-white" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-600 block">{isAr ? 'الاسم بالكامل (إنجليزي) *' : 'Full Name (EN) *'}</label>
+                <input type="text" required value={editNameEn} onChange={(e) => setEditNameEn(e.target.value)} className="w-full text-xs font-semibold py-2.5 px-3 rounded-xl border bg-white dark:bg-slate-950 text-slate-900 dark:text-white" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-600 block">{isAr ? 'تصنيف الحساب' : 'Account Type'} *</label>
+                <select required value={editType} onChange={(e) => setEditType(e.target.value as AccountType)} className="w-full text-xs font-semibold py-2 px-3 rounded-xl border bg-white dark:bg-slate-950 text-slate-900 dark:text-white">
+                  {(Object.keys(groupLabels) as AccountType[]).map(t => (
+                    <option key={t} value={t}>{isAr ? groupLabels[t].ar : groupLabels[t].en}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-600 block">{isAr ? 'كود الحساب الرئيسي (الأب)' : 'Parent Account Code'}</label>
+                <select value={editParentCode} onChange={(e) => setEditParentCode(e.target.value)} className="w-full text-xs font-semibold py-2.5 px-3 rounded-xl border bg-white dark:bg-slate-950 text-slate-900 dark:text-white">
+                  <option value="">{isAr ? '— حساب رئيسي مستقل (جذر) —' : '— Standalone Root Account —'}</option>
+                  {data.accounts.filter(a => a.id !== editingAccount.id).map(a => (
+                    <option key={a.id} value={a.code}>{a.code} - {isAr ? a.nameAr : a.nameEn}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-600 block">{isAr ? 'الرصيد الافتتاحي الجاري' : 'Current Balance'}</label>
+                <input type="number" value={editBalance} onChange={(e) => setEditBalance(Number(e.target.value))} className="w-full text-xs font-mono font-bold py-2.5 px-3 rounded-xl border bg-white dark:bg-slate-950 text-slate-900 dark:text-white" />
+              </div>
+              <div className="flex justify-end gap-2 pt-3 border-t">
+                <button type="button" onClick={() => setEditingAccount(null)} className="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-355 px-4 py-2 rounded-xl cursor-pointer">{isAr ? 'إلغاء' : 'Cancel'}</button>
+                <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-5 py-2 rounded-xl cursor-pointer">{isAr ? 'حفظ التعديل' : 'Save Changes'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Styled React Alert Modal */}
+      {alertModal.show && (
+        <div className="fixed inset-0 bg-slate-950/45 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-855 rounded-3xl shadow-2xl w-full max-w-sm text-start overflow-hidden flex flex-col text-xs font-semibold">
+            <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-100 dark:border-slate-850 flex justify-between items-center shrink-0">
+              <span className="font-black text-slate-900 dark:text-white uppercase tracking-wider">{alertModal.title}</span>
+              <button onClick={() => setAlertModal(prev => ({ ...prev, show: false }))} className="text-slate-400 hover:text-slate-655 cursor-pointer"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="p-6 space-y-4 text-center">
+              <div className="flex justify-center">
+                <ShieldAlert className={`h-12 w-12 ${
+                  alertModal.type === 'success' ? 'text-emerald-500' :
+                  alertModal.type === 'error' ? 'text-rose-500' :
+                  alertModal.type === 'warning' ? 'text-amber-500' : 'text-blue-500'
+                }`} />
+              </div>
+              <p className="text-sm font-bold text-slate-800 dark:text-slate-200 leading-relaxed">{alertModal.message}</p>
+            </div>
+            <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-855 flex justify-end shrink-0">
+              <button 
+                onClick={() => setAlertModal(prev => ({ ...prev, show: false }))} 
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-2 rounded-xl cursor-pointer"
+              >
+                {isAr ? 'موافق' : 'OK'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Styled React Confirmation Modal */}
+      {confirmModal.show && (
+        <div className="fixed inset-0 bg-slate-950/45 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-855 rounded-3xl shadow-2xl w-full max-w-sm text-start overflow-hidden flex flex-col text-xs font-semibold">
+            <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-100 dark:border-slate-850 flex justify-between items-center shrink-0">
+              <span className="font-black text-slate-900 dark:text-white uppercase tracking-wider">{confirmModal.title}</span>
+              <button onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))} className="text-slate-400 hover:text-slate-655 cursor-pointer"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="p-6 space-y-4 text-center">
+              <div className="flex justify-center">
+                <ShieldAlert className="h-12 w-12 text-amber-500" />
+              </div>
+              <p className="text-sm font-bold text-slate-800 dark:text-slate-200 leading-relaxed">{confirmModal.message}</p>
+            </div>
+            <div className="px-6 py-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-855 flex justify-end gap-2 shrink-0">
+              <button 
+                onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))} 
+                className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-355 px-4 py-2 rounded-xl cursor-pointer"
+              >
+                {isAr ? 'إلغاء' : 'Cancel'}
+              </button>
+              <button 
+                onClick={() => {
+                  confirmModal.onConfirm();
+                  setConfirmModal(prev => ({ ...prev, show: false }));
+                }} 
+                className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-5 py-2 rounded-xl cursor-pointer"
+              >
+                {isAr ? 'تأكيد' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -53,7 +53,7 @@ export async function apiRequest<T>(
 
   if (res.status === 401) {
     clearAuthToken();
-    window.location.reload();
+    window.dispatchEvent(new CustomEvent('auth:expired'));
     throw new Error('Session expired');
   }
 
@@ -66,6 +66,24 @@ export async function apiRequest<T>(
   const text = await res.text();
   if (!text) return {} as T;
   return JSON.parse(text);
+}
+
+// ═══════════════════════════════════════
+// LICENSE API
+// ═══════════════════════════════════════
+
+export async function getLicenseStatus() {
+  const res = await fetch(`${API_BASE_URL}/license/status`);
+  return res.json();
+}
+
+export async function activateLicenseKey(licenseKey: string) {
+  const res = await fetch(`${API_BASE_URL}/license/activate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ licenseKey })
+  });
+  return res.json();
 }
 
 // ═══════════════════════════════════════
@@ -171,12 +189,29 @@ export async function createDatabaseBackup(): Promise<{ messageAr: string; messa
   return apiRequest('/system/backup', { method: 'POST' });
 }
 
-export async function restoreDatabaseBackup(): Promise<{ messageAr: string; messageEn: string }> {
-  return apiRequest('/system/restore', { method: 'POST' });
+export async function restoreDatabaseBackup(fileName?: string): Promise<{ messageAr: string; messageEn: string }> {
+  return apiRequest('/system/restore', { 
+    method: 'POST',
+    body: fileName ? JSON.stringify({ fileName }) : undefined
+  });
 }
 
-export async function resetDatabaseToDefault(): Promise<{ messageAr: string; messageEn: string }> {
-  return apiRequest('/system/reset', { method: 'POST' });
+export async function fetchBackupsList(): Promise<{ fileName: string; sizeBytes: number; createdAt: string; modifiedAt: string }[]> {
+  return apiRequest('/system/backups/list');
+}
+
+export async function restoreFromExternalFile(filePath: string): Promise<{ messageAr: string; messageEn: string }> {
+  return apiRequest('/system/restore-from-file', {
+    method: 'POST',
+    body: JSON.stringify({ filePath })
+  });
+}
+
+export async function resetDatabaseToDefault(password: string): Promise<{ messageAr: string; messageEn: string }> {
+  return apiRequest('/system/reset', { 
+    method: 'POST',
+    body: JSON.stringify({ password })
+  });
 }
 
 export async function fetchDashboardData(): Promise<any> {

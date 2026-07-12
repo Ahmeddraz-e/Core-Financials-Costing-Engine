@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { RotateCcw, Plus, Search, Printer, Download, ArrowLeftRight, CreditCard, ShoppingCart } from 'lucide-react';
-import { ERPData, SalesReturn, PurchaseReturn, JournalEntry, JournalEntryType } from '../types';
+import React, { useState, useMemo } from 'react';
+import { RotateCcw, Plus, Search, FileSpreadsheet, Download, ArrowLeftRight, CreditCard, ShoppingCart } from 'lucide-react';
+import { ERPData, SalesReturn, PurchaseReturn, JournalEntry, JournalEntryType, SalesInvoice, PurchaseTransaction, InvoiceStatus, PurchaseStatus } from '../types';
 import { printDocument, fmtCurrency, fmtDate, numberToArabicWords, companyHeaderHTML, signaturesHTML, footerHTML, exportToCSV } from '../utils/printUtils';
 
 interface ReturnsManagerProps {
@@ -14,13 +14,16 @@ interface ReturnsManagerProps {
   onUpdateSuppliers: (s: any[]) => void;
   onUpdateTreasuries: (t: any[]) => void;
   onUpdateInventory: (i: any[]) => void;
+  onUpdateSalesInvoices: (inv: SalesInvoice[]) => void;
+  onUpdatePurchases: (p: PurchaseTransaction[]) => void;
   onAddAuditLog: (ar: string, en: string, d: string) => void;
 }
 
 export default function ReturnsManager({
   data, lang,
   onUpdateSalesReturns, onUpdatePurchaseReturns, onUpdateAccounts,
-  onUpdateEntries, onUpdateCustomers, onUpdateSuppliers, onUpdateTreasuries, onUpdateInventory, onAddAuditLog
+  onUpdateEntries, onUpdateCustomers, onUpdateSuppliers, onUpdateTreasuries, onUpdateInventory,
+  onUpdateSalesInvoices, onUpdatePurchases, onAddAuditLog
 }: ReturnsManagerProps) {
   const isAr = lang === 'ar';
   
@@ -36,9 +39,11 @@ export default function ReturnsManager({
   const [amount, setAmount] = useState(0);
   const [taxAmount, setTaxAmount] = useState(0);
   const [refundMethod, setRefundMethod] = useState<'CASH' | 'CREDIT'>('CREDIT');
-  
-  const formatCurrency = (val: number) =>
-    new Intl.NumberFormat(isAr ? 'ar-EG' : 'en-US', { style: 'currency', currency: 'EGP', maximumFractionDigits: 2 }).format(val);
+
+  const formatCurrency = (val: number) => {
+    const formattedNum = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(val);
+    return isAr ? `${formattedNum} ج.م` : `${formattedNum} EGP`;
+  }
 
   const getPartyName = (id: string, type: 'SALES' | 'PURCHASE') => {
     if (type === 'SALES') {
@@ -48,6 +53,42 @@ export default function ReturnsManager({
       const s = data.suppliers.find(s => s.id === id);
       return s ? (isAr ? s.nameAr : s.nameEn) : (isAr ? 'مورد نقدي' : 'Cash Supplier');
     }
+  };
+
+  // Compute available source documents filtered by party + settlement method
+  const availableDocs = useMemo(() => {
+    const isSales = activeTab === 'SALES';
+    if (isSales) {
+      return (data.salesInvoices || []).filter(inv => {
+        if (partyId && inv.customerId !== partyId) return false;
+        if (refundMethod === 'CASH') return inv.status === InvoiceStatus.Paid;
+        return inv.status === InvoiceStatus.Issued;
+      }).map(inv => ({
+        id: inv.id,
+        number: inv.invoiceNumber,
+        date: inv.date,
+        totalAmount: inv.totalAmount,
+        partyName: getPartyName(inv.customerId, 'SALES')
+      }));
+    } else {
+      return (data.purchases || []).filter(p => {
+        if (partyId && p.supplierId !== partyId) return false;
+        if (refundMethod === 'CASH') return p.status === PurchaseStatus.Paid;
+        return p.status === PurchaseStatus.Invoiced;
+      }).map(p => ({
+        id: p.id,
+        number: p.number,
+        date: p.date,
+        totalAmount: p.totalAmount,
+        partyName: getPartyName(p.supplierId, 'PURCHASE')
+      }));
+    }
+  }, [activeTab, partyId, refundMethod, data.salesInvoices, data.purchases]);
+
+  const handleSelectDocument = (docNumber: string) => {
+    setOriginalInvoice(docNumber);
+    const doc = availableDocs.find(d => d.number === docNumber);
+    if (doc) setAmount(doc.totalAmount);
   };
 
   const handleCreateReturn = (e: React.FormEvent) => {
@@ -67,7 +108,7 @@ export default function ReturnsManager({
     if (isSales) {
       // Sales Return (Credit Note to Customer)
       // Dr: Sales Returns (412) - amount
-      // Dr: VAT (203) - taxAmount
+      // Dr: VAT (203) - taxAmount (manual)
       // Cr: Accounts Receivable (103) OR Cash (101) - totalAmount
       jeLines.push({ accountId: '412', debit: amount, credit: 0 }); // Assuming 412 is Sales Returns
       if (taxAmount > 0) jeLines.push({ accountId: '203', debit: taxAmount, credit: 0 });
@@ -97,11 +138,18 @@ export default function ReturnsManager({
       };
       onUpdateSalesReturns([newReturn, ...(data.salesReturns || [])]);
 
+      // Mark the original sales invoice as cancelled
+      if (originalInvoice && onUpdateSalesInvoices) {
+        const updatedInvoices = (data.salesInvoices || []).map(inv =>
+          inv.invoiceNumber === originalInvoice ? { ...inv, status: InvoiceStatus.Cancelled } : inv
+        );
+        onUpdateSalesInvoices(updatedInvoices);
+      }
+
     } else {
       // Purchase Return (Debit Note to Supplier)
       // Dr: Accounts Payable (201) OR Cash (101) - totalAmount
       // Cr: Purchase Returns (512) - amount
-      // Cr: VAT (203) - taxAmount
       if (refundMethod === 'CASH') {
         jeLines.push({ accountId: '101', debit: totalAmount, credit: 0 });
         onUpdateTreasuries(data.treasuries.map(t => t.id === 'cb-1' ? { ...t, balance: t.balance + totalAmount } : t));
@@ -129,6 +177,14 @@ export default function ReturnsManager({
         journalEntryId: jeId
       };
       onUpdatePurchaseReturns([newReturn, ...(data.purchaseReturns || [])]);
+
+      // Mark the original purchase as returned (liability settled via credit note)
+      if (originalInvoice && onUpdatePurchases) {
+        const updatedPurchases = (data.purchases || []).map(p =>
+          p.number === originalInvoice ? { ...p, status: PurchaseStatus.Returned } : p
+        );
+        onUpdatePurchases(updatedPurchases);
+      }
     }
 
     const newJE: JournalEntry = {
@@ -159,14 +215,14 @@ export default function ReturnsManager({
     const safeAccountsUpdate = data.accounts.map(acc => {
       if (isSales) {
         if (acc.id === '412') return { ...acc, balance: acc.balance + amount };
-        if (acc.id === '203') return { ...acc, balance: acc.balance + taxAmount };
+        if (acc.id === '203' && taxAmount > 0) return { ...acc, balance: acc.balance + taxAmount };
         if (acc.id === '101' && refundMethod === 'CASH') return { ...acc, balance: acc.balance - totalAmount };
         if (acc.id === '103' && refundMethod === 'CREDIT') return { ...acc, balance: acc.balance - totalAmount };
       } else {
         if (acc.id === '101' && refundMethod === 'CASH') return { ...acc, balance: acc.balance + totalAmount };
         if (acc.id === '201' && refundMethod === 'CREDIT') return { ...acc, balance: acc.balance - totalAmount };
         if (acc.id === '512') return { ...acc, balance: acc.balance + amount };
-        if (acc.id === '203') return { ...acc, balance: acc.balance - taxAmount };
+        if (acc.id === '203' && taxAmount > 0) return { ...acc, balance: acc.balance - taxAmount };
       }
       return acc;
     });
@@ -183,48 +239,20 @@ export default function ReturnsManager({
     window.showAlert('تم إنشاء المرتجع بنجاح', 'Return created successfully', 'success');
   };
 
-  const handlePrint = (ret: any, type: 'SALES' | 'PURCHASE') => {
+  const handleExportReturn = (ret: any, type: 'SALES' | 'PURCHASE') => {
     const isSales = type === 'SALES';
-    const title = isSales ? (isAr ? 'إشعار دائن (مرتجع مبيعات)' : 'Credit Note (Sales Return)') : (isAr ? 'إشعار مدين (مرتجع مشتريات)' : 'Debit Note (Purchase Return)');
-    const partyLabel = isSales ? (isAr ? 'العميل' : 'Customer') : (isAr ? 'المورد' : 'Supplier');
-    
-    const html = `
-      <div class="print-page">
-        ${companyHeaderHTML()}
-        <div class="doc-title" style="background:#fef2f2; border-color:#fca5a5">
-          <h2 style="color:#dc2626">${title}</h2>
-          <div class="doc-number">${ret.returnNumber}</div>
-        </div>
-
-        <div class="info-grid">
-          <div class="info-box"><div class="label">${isAr ? 'التاريخ' : 'Date'}</div><div class="value">${fmtDate(ret.date, lang)}</div></div>
-          <div class="info-box"><div class="label">${partyLabel}</div><div class="value">${getPartyName(isSales ? ret.customerId : ret.supplierId, type)}</div></div>
-          <div class="info-box"><div class="label">${isAr ? 'الفاتورة الأصلية' : 'Original Invoice'}</div><div class="value">${ret.originalInvoiceId}</div></div>
-          <div class="info-box"><div class="label">${isAr ? 'سبب الاسترجاع' : 'Return Reason'}</div><div class="value">${ret.reason || '-'}</div></div>
-        </div>
-
-        <div style="margin-top:20px; border:1px solid #e2e8f0; border-radius:8px; padding:15px;">
-          <table style="width:100%; border:none;">
-            <tr><td style="padding:5px; border:none;">${isAr ? 'المبلغ الفرعي:' : 'Subtotal:'}</td><td style="text-align:left; font-weight:bold; border:none;">${fmtCurrency(ret.subtotal, lang)}</td></tr>
-            <tr><td style="padding:5px; border:none;">${isAr ? 'ضريبة القيمة المضافة:' : 'VAT:'}</td><td style="text-align:left; font-weight:bold; border:none;">${fmtCurrency(ret.taxAmount, lang)}</td></tr>
-            <tr style="font-size:18px; border-top:2px solid #cbd5e1;"><td style="padding:10px 5px; border:none; font-weight:900;">${isAr ? 'الإجمالي:' : 'Total:'}</td><td style="text-align:left; font-weight:900; color:#dc2626; border:none;">${fmtCurrency(ret.totalAmount, lang)}</td></tr>
-          </table>
-        </div>
-        
-        <div class="amount-words">
-          ${isAr ? 'المبلغ كتابةً:' : 'Amount in words:'} ${numberToArabicWords(ret.totalAmount)}
-        </div>
-
-        ${signaturesHTML([
-          isAr ? 'أمين المخزن' : 'Storekeeper',
-          isAr ? 'المحاسب' : 'Accountant',
-          isAr ? 'المدير المالي' : 'Finance Manager'
-        ])}
-
-        ${footerHTML()}
-      </div>
-    `;
-    printDocument(html, `${title} - ${ret.returnNumber}`);
+    const rows = [{
+      [isAr ? 'رقم المرتجع' : 'Return Number']: ret.returnNumber,
+      [isAr ? 'التاريخ' : 'Date']: ret.date,
+      [isAr ? 'النوع' : 'Type']: isSales ? (isAr ? 'مرتجع مبيعات' : 'Sales Return') : (isAr ? 'مرتجع مشتريات' : 'Purchase Return'),
+      [isAr ? 'الجهة' : 'Party']: getPartyName(isSales ? ret.customerId : ret.supplierId, type),
+      [isAr ? 'الفاتورة الأصلية' : 'Original Invoice']: ret.originalInvoiceId,
+      [isAr ? 'المجموع الفرعي' : 'Subtotal']: ret.subtotal,
+      [isAr ? 'الضريبة' : 'VAT']: ret.taxAmount,
+      [isAr ? 'الإجمالي الكلي' : 'Total Amount']: ret.totalAmount,
+      [isAr ? 'السبب' : 'Reason']: ret.reason || ''
+    }];
+    exportToCSV(rows, `return_${ret.returnNumber}`);
   };
 
   const getList = () => {
@@ -313,8 +341,18 @@ export default function ReturnsManager({
             </div>
             <div>
               <label className="text-[10px] font-bold text-slate-500 block mb-1">{isAr ? 'رقم الفاتورة الأصلية' : 'Original Invoice #'}</label>
-              <input type="text" value={originalInvoice} onChange={e => setOriginalInvoice(e.target.value)} placeholder="INV-..."
-                className="w-full px-3 py-2 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white" />
+              <select value={originalInvoice} onChange={e => handleSelectDocument(e.target.value)}
+                className="w-full px-3 py-2 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white">
+                <option value="">{isAr ? '— اختر الفاتورة —' : '— Select Invoice —'}</option>
+                {availableDocs.map(doc => (
+                  <option key={doc.id} value={doc.number}>
+                    {doc.number} — {doc.partyName} ({formatCurrency(doc.totalAmount)})
+                  </option>
+                ))}
+              </select>
+              {availableDocs.length === 0 && partyId && (
+                <p className="text-[9px] text-amber-600 mt-1">{isAr ? 'لا توجد فواتير مطابقة لطريقة التسوية المحددة' : 'No matching invoices for the selected settlement method'}</p>
+              )}
             </div>
             <div>
               <label className="text-[10px] font-bold text-slate-500 block mb-1">{isAr ? 'طريقة التسوية' : 'Settlement Method'}</label>
@@ -345,7 +383,7 @@ export default function ReturnsManager({
 
           <div className="p-3 bg-red-50 dark:bg-red-900/20 rounded-lg flex justify-between items-center text-sm">
             <span className="font-bold text-red-800 dark:text-red-400">{isAr ? 'الإجمالي النهائي:' : 'Grand Total:'}</span>
-            <span className="font-black text-red-600 dark:text-red-500">{formatCurrency(amount + taxAmount)}</span>
+            <span className="font-black text-slate-900 dark:text-white">{formatCurrency(amount + taxAmount)}</span>
           </div>
 
           <div className="flex gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
@@ -360,10 +398,10 @@ export default function ReturnsManager({
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
           <div className="p-4 border-b border-slate-200 dark:border-slate-800">
             <div className="relative max-w-xs">
-              <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+              <Search className={`absolute ${isAr ? 'left-3' : 'right-3'} top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400`} />
               <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
                 placeholder={isAr ? 'بحث...' : 'Search...'}
-                className="w-full pr-9 pl-3 py-2 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white" />
+                className={`w-full ${isAr ? 'pl-9 pr-3' : 'pr-9 pl-3'} py-2 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white`} />
             </div>
           </div>
 
@@ -387,15 +425,15 @@ export default function ReturnsManager({
                 <tbody>
                   {getList().map((ret: any) => (
                     <tr key={ret.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/30">
-                      <td className="px-4 py-3 font-black text-red-600 dark:text-red-500">{ret.returnNumber}</td>
+                      <td className="px-4 py-3 font-black text-slate-900 dark:text-white">{ret.returnNumber}</td>
                       <td className="px-4 py-3 font-bold text-slate-600 dark:text-slate-400">{ret.date}</td>
                       <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">{getPartyName(activeTab === 'SALES' ? ret.customerId : ret.supplierId, activeTab)}</td>
                       <td className="px-4 py-3 font-bold text-slate-500">{ret.originalInvoiceId}</td>
                       <td className="px-4 py-3 font-black text-slate-900 dark:text-white text-left">{formatCurrency(ret.totalAmount)}</td>
                       <td className="px-4 py-3 text-center">
-                        <button onClick={() => handlePrint(ret, activeTab)} title={isAr ? 'طباعة إشعار' : 'Print Note'}
-                          className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500">
-                          <Printer className="h-3.5 w-3.5" />
+                        <button onClick={() => handleExportReturn(ret, activeTab)} title={isAr ? 'تصدير Excel' : 'Export Excel'}
+                          className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-emerald-600 cursor-pointer">
+                          <FileSpreadsheet className="h-4 w-4" />
                         </button>
                       </td>
                     </tr>

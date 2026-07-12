@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Users, Plus, Printer, Check, X, Download, FileText, Search, CreditCard, Clock } from 'lucide-react';
+import { Users, Plus, FileSpreadsheet, Check, X, Download, FileText, Search, CreditCard, Clock } from 'lucide-react';
 import { ERPData, Employee, PayrollRun, PayslipLine, JournalEntry, JournalEntryType } from '../types';
 import { printDocument, fmtCurrency, fmtDate, numberToArabicWords, companyHeaderHTML, signaturesHTML, footerHTML, exportToCSV } from '../utils/printUtils';
 
@@ -23,22 +23,55 @@ export default function PayrollManager({
   
   const [activeView, setActiveView] = useState<'list' | 'new'>('list');
   const [searchTerm, setSearchTerm] = useState('');
+  const [alertMsg, setAlertMsg] = useState<string | null>(null);
+  
+  const showPMAlert = (msg: string) => {
+    setAlertMsg(msg);
+    setTimeout(() => setAlertMsg(null), 3000);
+  };
   
   // New Run Form State
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [runDate, setRunDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [tempLines, setTempLines] = useState<PayslipLine[]>([]);
+
+  // Helper: Calculate approved leave days for an employee in a given month (excluding official holidays)
+  const getLeaveDaysInMonth = (empId: string, month: number, year: number): number => {
+    const leaves = data.hrLeaves || [];
+    const holidaySet = new Set<string>(
+      (data.hrEvents || [])
+        .filter((e: any) => e.type === 'holiday')
+        .map((e: any) => e.date)
+    );
+    let totalDays = 0;
+    const approvedLeaves = leaves.filter((l: any) => 
+      l.employeeId === empId && l.status === 'APPROVED' && l.type === 'UNPAID'
+    );
+    for (const leave of approvedLeaves) {
+      const from = new Date(leave.from);
+      const to = new Date(leave.to);
+      const monthStart = new Date(year, month - 1, 1);
+      const monthEnd = new Date(year, month, 0);
+      const overlapStart = from > monthStart ? from : monthStart;
+      const overlapEnd = to < monthEnd ? to : monthEnd;
+      if (overlapStart <= overlapEnd) {
+        const cursor = new Date(overlapStart);
+        while (cursor <= overlapEnd) {
+          const ds = cursor.toISOString().split('T')[0];
+          if (!holidaySet.has(ds)) totalDays++;
+          cursor.setDate(cursor.getDate() + 1);
+        }
+      }
+    }
+    return totalDays;
+  };
   
   // Initialize lines when opening new view
   const handleStartNewRun = () => {
     const existingRun = (data.payrollRuns || []).find(r => r.month === selectedMonth && r.year === selectedYear);
     if (existingRun) {
-      window.showAlert(
-        `تم إصدار رواتب شهر ${selectedMonth}/${selectedYear} مسبقاً`,
-        `Payroll for ${selectedMonth}/${selectedYear} has already been generated`,
-        'warning'
-      );
+      showPMAlert(isAr ? `تم إصدار رواتب شهر ${selectedMonth}/${selectedYear} مسبقاً` : `Payroll for ${selectedMonth}/${selectedYear} has already been generated`);
       return;
     }
 
@@ -47,17 +80,19 @@ export default function PayrollManager({
     const initialLines: PayslipLine[] = activeEmployees.map(emp => {
       const basic = emp.salary || 0;
       const wDays = emp.workingDays || 30;
+      const leaveDays = getLeaveDaysInMonth(emp.id, selectedMonth, selectedYear);
+      const actualDays = Math.max(0, wDays - leaveDays);
       return {
         employeeId: emp.id,
         basicSalary: basic,
         workingDays: wDays,
-        actualDays: wDays,
+        actualDays: actualDays,
         overtime: emp.overtimeHours || 0,
-        overtimeAmount: ((emp.overtimeHours || 0) * (basic / (wDays * 8))), // Approx per hour rate
+        overtimeAmount: ((emp.overtimeHours || 0) * (basic / (wDays * (emp.workingHours || 8))) * 1.5),
         allowances: emp.allowances || 0,
         grossPay: 0, // calc later
         deductions: emp.deductions || 0,
-        loanInstallment: emp.loanBalance > 0 ? Math.min(emp.loanBalance, basic * 0.1) : 0, // Auto deduct 10% or remaining
+        loanInstallment: emp.loanBalance > 0 ? Math.min(emp.loanBalance, basic * 0.1) : 0,
         socialInsurance: 0,
         tax: 0,
         netPay: 0 // calc later
@@ -111,20 +146,26 @@ export default function PayrollManager({
     // Create Journal Entry
     const jeId = 'je-pr-' + Math.random().toString(36).substring(2, 9);
     const totalLoansRecovered = tempLines.reduce((s, l) => s + l.loanInstallment, 0);
+    const totalAllowances = tempLines.reduce((s, l) => s + l.allowances, 0);
+    const totalDeductionsOnly = tempLines.reduce((s, l) => s + l.deductions, 0);
+    const totalBasicAndOvertime = totalGross - totalAllowances;
     
     const jeLines = [];
-    // Dr Salaries Expense (501)
-    jeLines.push({ accountId: '501', debit: totalGross, credit: 0 });
+    // Dr Basic Salary & Overtime (601)
+    jeLines.push({ accountId: '601', debit: totalBasicAndOvertime, credit: 0 });
+    // Dr Allowances Expense (606) if applicable
+    if (totalAllowances > 0) {
+      jeLines.push({ accountId: '606', debit: totalAllowances, credit: 0 });
+    }
+    // Cr Employee Penalties Income (405) if applicable
+    if (totalDeductionsOnly > 0) {
+      jeLines.push({ accountId: '405', debit: 0, credit: totalDeductionsOnly });
+    }
     // Cr Cash/Bank (101) for Net
     jeLines.push({ accountId: '101', debit: 0, credit: totalNet });
-    // Cr Employee Loans (104) if applicable
+    // Cr Employee Loans (107) if applicable
     if (totalLoansRecovered > 0) {
-      jeLines.push({ accountId: '104', debit: 0, credit: totalLoansRecovered });
-    }
-    // Cr Other deductions/insurance/taxes (204) - simplifying for now
-    const otherDeductions = totalDeductions - totalLoansRecovered;
-    if (otherDeductions > 0) {
-      jeLines.push({ accountId: '204', debit: 0, credit: otherDeductions });
+      jeLines.push({ accountId: '107', debit: 0, credit: totalLoansRecovered });
     }
     
     const newJE: JournalEntry = {
@@ -163,10 +204,11 @@ export default function PayrollManager({
 
     // Update Accounts
     const updatedAccounts = data.accounts.map(acc => {
-      if (acc.id === '501') return { ...acc, balance: acc.balance + totalGross };
+      if (acc.id === '601') return { ...acc, balance: acc.balance + totalBasicAndOvertime };
+      if (acc.id === '606') return { ...acc, balance: acc.balance + totalAllowances };
+      if (acc.id === '405') return { ...acc, balance: acc.balance + totalDeductionsOnly };
       if (acc.id === '101') return { ...acc, balance: acc.balance - totalNet };
-      if (acc.id === '104') return { ...acc, balance: acc.balance - totalLoansRecovered };
-      if (acc.id === '204') return { ...acc, balance: acc.balance + otherDeductions };
+      if (acc.id === '107') return { ...acc, balance: acc.balance - totalLoansRecovered };
       return acc;
     });
     
@@ -188,152 +230,59 @@ export default function PayrollManager({
     );
 
     setActiveView('list');
-    window.showAlert('تم اعتماد الرواتب بنجاح', 'Payroll approved successfully', 'success');
+    showPMAlert(isAr ? 'تم اعتماد الرواتب بنجاح' : 'Payroll approved successfully');
   };
 
-  const formatCurrency = (val: number) =>
-    new Intl.NumberFormat(isAr ? 'ar-EG' : 'en-US', { style: 'currency', currency: 'EGP', maximumFractionDigits: 2 }).format(val);
+  const formatCurrency = (val: number) => {
+    const formattedNum = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(val);
+    return isAr ? `${formattedNum} ج.م` : `${formattedNum} EGP`;
+  }
 
-  // Print single payslip
-  const handlePrintPayslip = (run: PayrollRun, line: PayslipLine) => {
-    const html = `
-      <div class="print-page">
-        ${companyHeaderHTML()}
-        <div class="doc-title">
-          <h2>${isAr ? 'قسيمة راتب (مفردات مرتب)' : 'Payslip'}</h2>
-          <div class="doc-number">${isAr ? 'شهر' : 'Month'} ${run.month}/${run.year}</div>
-        </div>
-
-        <div class="info-grid">
-          <div class="info-box"><div class="label">${isAr ? 'اسم الموظف' : 'Employee Name'}</div><div class="value">${getEmpName(line.employeeId)}</div></div>
-          <div class="info-box"><div class="label">${isAr ? 'الوظيفة' : 'Role'}</div><div class="value">${getEmpRole(line.employeeId)}</div></div>
-          <div class="info-box"><div class="label">${isAr ? 'أيام العمل' : 'Days Worked'}</div><div class="value">${line.actualDays} / ${line.workingDays}</div></div>
-          <div class="info-box"><div class="label">${isAr ? 'تاريخ الصرف' : 'Pay Date'}</div><div class="value">${fmtDate(run.date, lang)}</div></div>
-        </div>
-
-        <table style="margin-top:20px; width:100%;">
-          <thead>
-            <tr>
-              <th colspan="2" style="background:#f0fdf4; color:#166534">${isAr ? 'الاستحقاقات' : 'Earnings'}</th>
-              <th colspan="2" style="background:#fef2f2; color:#991b1b">${isAr ? 'الاستقطاعات' : 'Deductions'}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>${isAr ? 'الراتب الأساسي' : 'Basic Salary'}</td>
-              <td style="text-align:left; font-weight:bold">${fmtCurrency(line.basicSalary, lang)}</td>
-              <td>${isAr ? 'خصومات/غياب' : 'Absence/Penalties'}</td>
-              <td style="text-align:left; font-weight:bold">${fmtCurrency(line.deductions, lang)}</td>
-            </tr>
-            <tr>
-              <td>${isAr ? 'بدلات' : 'Allowances'}</td>
-              <td style="text-align:left; font-weight:bold">${fmtCurrency(line.allowances, lang)}</td>
-              <td>${isAr ? 'قسط سلفة' : 'Loan Installment'}</td>
-              <td style="text-align:left; font-weight:bold">${fmtCurrency(line.loanInstallment, lang)}</td>
-            </tr>
-            <tr>
-              <td>${isAr ? 'إضافي/عمل ساعات إضافية' : 'Overtime'}</td>
-              <td style="text-align:left; font-weight:bold">${fmtCurrency(line.overtimeAmount, lang)}</td>
-              <td>${isAr ? 'تأمينات اجتماعية' : 'Social Insurance'}</td>
-              <td style="text-align:left; font-weight:bold">${fmtCurrency(line.socialInsurance, lang)}</td>
-            </tr>
-            <tr>
-              <td></td>
-              <td></td>
-              <td>${isAr ? 'ضرائب' : 'Taxes'}</td>
-              <td style="text-align:left; font-weight:bold">${fmtCurrency(line.tax, lang)}</td>
-            </tr>
-            <tr style="background:#f8fafc; font-size:14px;">
-              <td style="font-weight:900; color:#166534">${isAr ? 'إجمالي الاستحقاقات' : 'Gross Pay'}</td>
-              <td style="text-align:left; font-weight:900; color:#166534">${fmtCurrency(line.grossPay, lang)}</td>
-              <td style="font-weight:900; color:#991b1b">${isAr ? 'إجمالي الاستقطاعات' : 'Total Deductions'}</td>
-              <td style="text-align:left; font-weight:900; color:#991b1b">${fmtCurrency(line.deductions + line.loanInstallment + line.socialInsurance + line.tax, lang)}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <div style="margin-top:20px; border:2px solid #0f172a; padding:15px; border-radius:8px; text-align:center; background:#f8fafc">
-          <div style="font-size:12px; font-weight:bold; color:#64748b; margin-bottom:5px;">${isAr ? 'صافي الراتب المستحق' : 'Net Pay'}</div>
-          <div style="font-size:24px; font-weight:900; color:#0f172a;">${fmtCurrency(line.netPay, lang)}</div>
-          <div style="font-size:12px; margin-top:5px; color:#475569;">${numberToArabicWords(line.netPay)}</div>
-        </div>
-
-        ${signaturesHTML([
-          isAr ? 'مدير الموارد البشرية' : 'HR Manager',
-          isAr ? 'المدير المالي' : 'Finance Manager',
-          isAr ? 'توقيع الموظف بالاستلام' : 'Employee Signature'
-        ])}
-        
-        ${footerHTML()}
-      </div>
-    `;
-    printDocument(html, `${isAr ? 'قسيمة راتب' : 'Payslip'} - ${getEmpName(line.employeeId)}`);
+  // Export single payslip to Excel
+  const handleExportPayslip = (run: PayrollRun, line: PayslipLine) => {
+    const rows = [{
+      [isAr ? 'الموظف' : 'Employee']: getEmpName(line.employeeId),
+      [isAr ? 'الوظيفة' : 'Role']: getEmpRole(line.employeeId),
+      [isAr ? 'أيام العمل الفعالة' : 'Worked Days']: line.actualDays,
+      [isAr ? 'الراتب الأساسي' : 'Basic Salary']: line.basicSalary,
+      [isAr ? 'البدلات' : 'Allowances']: line.allowances,
+      [isAr ? 'الإضافي' : 'Overtime']: line.overtimeAmount,
+      [isAr ? 'الاستحقاقات الكلية' : 'Gross Pay']: line.grossPay,
+      [isAr ? 'الخصومات' : 'Deductions']: line.deductions,
+      [isAr ? 'السلف' : 'Loans']: line.loanInstallment,
+      [isAr ? 'التأمينات' : 'Social Ins']: line.socialInsurance,
+      [isAr ? 'الضرائب' : 'Tax']: line.tax,
+      [isAr ? 'صافي الراتب' : 'Net Pay']: line.netPay
+    }];
+    exportToCSV(rows, `payslip_${getEmpName(line.employeeId).replace(/\s+/g, '_')}_${run.month}_${run.year}`);
   };
 
-  // Print Full Payroll Report
-  const handlePrintRun = (run: PayrollRun) => {
-    const rowsHTML = run.lines.map((line, i) => `
-      <tr>
-        <td style="text-align:center">${i + 1}</td>
-        <td>${getEmpName(line.employeeId)}</td>
-        <td style="text-align:center">${line.actualDays}</td>
-        <td style="text-align:left">${fmtCurrency(line.basicSalary, lang)}</td>
-        <td style="text-align:left">${fmtCurrency(line.allowances + line.overtimeAmount, lang)}</td>
-        <td style="text-align:left; color:#166534; font-weight:bold">${fmtCurrency(line.grossPay, lang)}</td>
-        <td style="text-align:left">${fmtCurrency(line.deductions + line.tax + line.socialInsurance, lang)}</td>
-        <td style="text-align:left">${fmtCurrency(line.loanInstallment, lang)}</td>
-        <td style="text-align:left; color:#0f172a; font-weight:900">${fmtCurrency(line.netPay, lang)}</td>
-      </tr>
-    `).join('');
-
-    const html = `
-      <div class="print-page" style="max-width:297mm; padding:15mm;">
-        ${companyHeaderHTML()}
-        <div class="doc-title">
-          <h2>${isAr ? 'كشف رواتب الموظفين' : 'Payroll Sheet'}</h2>
-          <div class="doc-number">${isAr ? 'شهر' : 'Month'} ${run.month}/${run.year} - ${run.runNumber}</div>
-        </div>
-
-        <div class="info-grid">
-          <div class="info-box"><div class="label">${isAr ? 'تاريخ الإصدار' : 'Issue Date'}</div><div class="value">${fmtDate(run.date, lang)}</div></div>
-          <div class="info-box"><div class="label">${isAr ? 'حالة الكشف' : 'Status'}</div><div class="value">${isAr ? 'معتمد ومصروف' : 'Approved & Paid'}</div></div>
-          <div class="info-box"><div class="label">${isAr ? 'عدد الموظفين' : 'Employees Count'}</div><div class="value">${run.lines.length}</div></div>
-          <div class="info-box"><div class="label">${isAr ? 'إجمالي الصافي' : 'Total Net Pay'}</div><div class="value" style="color:#0f172a; font-weight:bold">${fmtCurrency(run.totalNet, lang)}</div></div>
-        </div>
-
-        <table style="font-size:10px;">
-          <thead>
-            <tr>
-              <th style="width:30px">#</th>
-              <th>${isAr ? 'اسم الموظف' : 'Employee'}</th>
-              <th style="width:40px">${isAr ? 'أيام' : 'Days'}</th>
-              <th style="width:70px">${isAr ? 'أساسي' : 'Basic'}</th>
-              <th style="width:70px">${isAr ? 'إضافي/بدلات' : 'Allowances'}</th>
-              <th style="width:80px; background:#f0fdf4">${isAr ? 'إجمالي الاستحقاق' : 'Gross Pay'}</th>
-              <th style="width:70px">${isAr ? 'استقطاعات' : 'Deductions'}</th>
-              <th style="width:60px">${isAr ? 'سلف' : 'Loans'}</th>
-              <th style="width:90px; background:#f8fafc">${isAr ? 'الصافي' : 'Net Pay'}</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rowsHTML}
-            <tr style="background:#1e40af; color:#fff; font-weight:bold; font-size:12px;">
-              <td colspan="5" style="text-align:left">${isAr ? 'الإجمالي العام' : 'Grand Total'}</td>
-              <td style="text-align:left">${fmtCurrency(run.totalGross, lang)}</td>
-              <td style="text-align:left" colspan="2">${fmtCurrency(run.totalDeductions, lang)}</td>
-              <td style="text-align:left">${fmtCurrency(run.totalNet, lang)}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        ${signaturesHTML([
-          isAr ? 'إعداد (الموارد البشرية)' : 'Prepared By (HR)',
-          isAr ? 'مراجعة (الحسابات)' : 'Reviewed By (Finance)',
-          isAr ? 'اعتماد (المدير العام)' : 'Approved By (GM)'
-        ])}
-      </div>
-    `;
-    printDocument(html, `${isAr ? 'كشف رواتب' : 'Payroll Sheet'} - ${run.month}-${run.year}`);
+  // Export Full Payroll Report to Excel
+  const handleExportRun = (run: PayrollRun) => {
+    const rows = run.lines.map((line, i) => ({
+      '#': i + 1,
+      [isAr ? 'الموظف' : 'Employee']: getEmpName(line.employeeId),
+      [isAr ? 'أيام العمل' : 'Worked Days']: line.actualDays,
+      [isAr ? 'الراتب الأساسي' : 'Basic Salary']: line.basicSalary,
+      [isAr ? 'البدلات والإضافي' : 'Allowances & OT']: line.allowances + line.overtimeAmount,
+      [isAr ? 'إجمالي الاستحقاق' : 'Gross Pay']: line.grossPay,
+      [isAr ? 'الاستقطاعات والضرائب' : 'Deductions & Taxes']: line.deductions + line.tax + line.socialInsurance,
+      [isAr ? 'السلف' : 'Loans']: line.loanInstallment,
+      [isAr ? 'صافي الراتب' : 'Net Pay']: line.netPay
+    }));
+    // Append grand total row
+    rows.push({
+      '#': 0,
+      [isAr ? 'الموظف' : 'Employee']: isAr ? 'الإجمالي العام' : 'Grand Total',
+      [isAr ? 'أيام العمل' : 'Worked Days']: 0,
+      [isAr ? 'الراتب الأساسي' : 'Basic Salary']: run.lines.reduce((s, l) => s + l.basicSalary, 0),
+      [isAr ? 'البدلات والإضافي' : 'Allowances & OT']: run.lines.reduce((s, l) => s + (l.allowances + l.overtimeAmount), 0),
+      [isAr ? 'إجمالي الاستحقاق' : 'Gross Pay']: run.totalGross,
+      [isAr ? 'الاستقطاعات والضرائب' : 'Deductions & Taxes']: run.lines.reduce((s, l) => s + (l.deductions + l.tax + l.socialInsurance), 0),
+      [isAr ? 'السلف' : 'Loans']: run.lines.reduce((s, l) => s + l.loanInstallment, 0),
+      [isAr ? 'صافي الراتب' : 'Net Pay']: run.totalNet
+    });
+    exportToCSV(rows, `payroll_${run.month}_${run.year}`);
   };
 
   const runs = data.payrollRuns || [];
@@ -408,11 +357,11 @@ export default function PayrollManager({
                   <th className="text-center px-2 py-3 font-bold text-slate-500 w-16">{isAr ? 'أيام عمل' : 'Days'}</th>
                   <th className="text-left px-2 py-3 font-bold text-slate-500">{isAr ? 'أساسي' : 'Basic'}</th>
                   <th className="text-left px-2 py-3 font-bold text-slate-500 w-24">{isAr ? 'بدلات/إضافي' : 'Allowances'}</th>
-                  <th className="text-left px-2 py-3 font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-900/10">{isAr ? 'إجمالي الاستحقاق' : 'Gross Pay'}</th>
+                  <th className="text-left px-2 py-3 font-bold text-slate-600">{isAr ? 'إجمالي الاستحقاق' : 'Gross Pay'}</th>
                   <th className="text-left px-2 py-3 font-bold text-slate-500 w-24">{isAr ? 'خصومات' : 'Deduct.'}</th>
                   <th className="text-left px-2 py-3 font-bold text-slate-500 w-24">{isAr ? 'سلف/قروض' : 'Loans'}</th>
                   <th className="text-left px-2 py-3 font-bold text-slate-500 w-24">{isAr ? 'تأمينات/ضرائب' : 'Taxes/Ins.'}</th>
-                  <th className="text-left px-2 py-3 font-bold text-blue-600 bg-blue-50 dark:bg-blue-900/10">{isAr ? 'الصافي' : 'Net Pay'}</th>
+                  <th className="text-left px-2 py-3 font-bold text-blue-600">{isAr ? 'الصافي' : 'Net Pay'}</th>
                 </tr>
               </thead>
               <tbody>
@@ -420,15 +369,22 @@ export default function PayrollManager({
                   <tr key={line.employeeId} className="border-b border-slate-100 dark:border-slate-800">
                     <td className="px-2 py-2 font-bold text-slate-900 dark:text-white">{getEmpName(line.employeeId)}</td>
                     <td className="px-2 py-2">
-                      <input type="number" min={0} max={line.workingDays} value={line.actualDays} onChange={e => updateLine(line.employeeId, 'actualDays', +e.target.value)}
-                        className="w-full text-center px-1 py-1 text-xs rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800" />
+                      <div className="flex items-center gap-1">
+                        <input type="number" min={0} max={line.workingDays} value={line.actualDays} onChange={e => updateLine(line.employeeId, 'actualDays', +e.target.value)}
+                          className={`w-16 text-center px-1 py-1 text-xs rounded border ${
+                            line.actualDays < line.workingDays 
+                              ? 'border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-700' 
+                              : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800'
+                          }`} />
+                        <span className="text-[9px] text-slate-400">/{line.workingDays}</span>
+                      </div>
                     </td>
                     <td className="px-2 py-2 font-bold">{formatCurrency(line.basicSalary)}</td>
                     <td className="px-2 py-2">
                       <input type="number" min={0} value={line.allowances + line.overtimeAmount} onChange={e => updateLine(line.employeeId, 'allowances', +e.target.value)}
                         className="w-full px-1 py-1 text-xs rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800" />
                     </td>
-                    <td className="px-2 py-2 font-black text-emerald-700 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-900/5">{formatCurrency(line.grossPay)}</td>
+                    <td className="px-2 py-2 font-black text-slate-900 dark:text-white bg-emerald-50/50 dark:bg-emerald-900/5">{formatCurrency(line.grossPay)}</td>
                     <td className="px-2 py-2">
                       <input type="number" min={0} value={line.deductions} onChange={e => updateLine(line.employeeId, 'deductions', +e.target.value)}
                         className="w-full px-1 py-1 text-xs rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800" />
@@ -442,7 +398,7 @@ export default function PayrollManager({
                       <input type="number" min={0} value={line.socialInsurance + line.tax} onChange={e => updateLine(line.employeeId, 'tax', +e.target.value)}
                         className="w-full px-1 py-1 text-xs rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800" />
                     </td>
-                    <td className="px-2 py-2 font-black text-blue-700 dark:text-blue-400 bg-blue-50/50 dark:bg-blue-900/5 text-lg">{formatCurrency(line.netPay)}</td>
+                    <td className="px-2 py-2 font-black text-slate-900 dark:text-white bg-blue-50/50 dark:bg-blue-900/5 text-lg">{formatCurrency(line.netPay)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -455,10 +411,10 @@ export default function PayrollManager({
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
           <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center">
             <div className="relative max-w-xs w-full">
-              <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+              <Search className={`absolute ${isAr ? 'left-3' : 'right-3'} top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400`} />
               <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
                 placeholder={isAr ? 'بحث...' : 'Search...'}
-                className="w-full pr-9 pl-3 py-2 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white" />
+                className={`w-full ${isAr ? 'pl-9 pr-3' : 'pr-9 pl-3'} py-2 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white`} />
             </div>
           </div>
 
@@ -487,24 +443,24 @@ export default function PayrollManager({
                       <td className="px-4 py-3 font-bold text-blue-600">{run.runNumber}</td>
                       <td className="px-4 py-3 font-bold text-slate-600 dark:text-slate-400">{run.date}</td>
                       <td className="px-4 py-3 font-bold text-center">{run.lines.length}</td>
-                      <td className="px-4 py-3 font-bold text-emerald-600 text-left">{formatCurrency(run.totalGross)}</td>
+                      <td className="px-4 py-3 font-bold text-slate-900 dark:text-white text-left">{formatCurrency(run.totalGross)}</td>
                       <td className="px-4 py-3 font-black text-slate-900 dark:text-white text-left">{formatCurrency(run.totalNet)}</td>
                       <td className="px-4 py-3 text-center">
                         <div className="flex items-center justify-center gap-1">
-                          <button onClick={() => handlePrintRun(run)} title={isAr ? 'طباعة كشف مجمع' : 'Print Payroll Sheet'}
-                            className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500">
-                            <Printer className="h-3.5 w-3.5" />
+                          <button onClick={() => handleExportRun(run)} title={isAr ? 'تصدير كشف مجمع' : 'Export Payroll Sheet'}
+                            className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-white cursor-pointer">
+                            <FileSpreadsheet className="h-4 w-4" />
                           </button>
                           <div className="relative group inline-block">
                             <button className="p-1.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/30 text-blue-600">
                               <FileText className="h-3.5 w-3.5" />
                             </button>
-                            <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
-                              <div className="p-2 text-[10px] font-bold text-slate-400 border-b border-slate-100 dark:border-slate-700">{isAr ? 'طباعة قسيمة فردية' : 'Print individual payslip'}</div>
+                            <div className={`absolute ${isAr ? 'left-0' : 'right-0'} mt-1 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10`}>
+                              <div className="p-2 text-[10px] font-bold text-slate-400 border-b border-slate-100 dark:border-slate-700">{isAr ? 'تصدير قسيمة فردية' : 'Export individual payslip'}</div>
                               <ul className="max-h-40 overflow-y-auto">
                                 {run.lines.map(line => (
                                   <li key={line.employeeId}>
-                                    <button onClick={() => handlePrintPayslip(run, line)} className="w-full text-right px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700 font-bold truncate">
+                                    <button onClick={() => handleExportPayslip(run, line)} className="w-full text-right px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-700 font-bold truncate cursor-pointer">
                                       {getEmpName(line.employeeId)}
                                     </button>
                                   </li>
@@ -520,6 +476,12 @@ export default function PayrollManager({
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {alertMsg && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-blue-600 text-white px-6 py-3 rounded-xl shadow-2xl text-xs font-bold animate-bounce">
+          {alertMsg}
         </div>
       )}
     </div>

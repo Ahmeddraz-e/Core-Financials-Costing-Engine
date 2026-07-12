@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS journal_lines (
   accountId TEXT NOT NULL,
   debit REAL NOT NULL DEFAULT 0,
   credit REAL NOT NULL DEFAULT 0,
+  itemsJson TEXT,
   FOREIGN KEY (entryId) REFERENCES journal_entries(id) ON DELETE CASCADE
 );
 
@@ -68,6 +69,8 @@ CREATE TABLE IF NOT EXISTS wastage (
 CREATE TABLE IF NOT EXISTS recipes (
   id TEXT PRIMARY KEY,
   itemId TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  isActive INTEGER NOT NULL DEFAULT 1,
   yieldAmount REAL NOT NULL DEFAULT 1,
   laborCost REAL NOT NULL DEFAULT 0,
   packagingCost REAL NOT NULL DEFAULT 0,
@@ -188,7 +191,20 @@ CREATE TABLE IF NOT EXISTS employees (
   allowances REAL DEFAULT 0,
   deductions REAL DEFAULT 0,
   overtimeHours REAL DEFAULT 0,
-  workingDays REAL DEFAULT 0
+  workingDays REAL DEFAULT 0,
+  workingHours REAL DEFAULT 0,
+  nationalId TEXT DEFAULT '',
+  department TEXT DEFAULT '',
+  email TEXT DEFAULT '',
+  phone TEXT DEFAULT '',
+  hireDate TEXT DEFAULT '',
+  contractType TEXT DEFAULT '',
+  manager TEXT DEFAULT '',
+  status TEXT DEFAULT 'ACTIVE',
+  timelineJson TEXT DEFAULT '[]',
+  contractStartDate TEXT DEFAULT '',
+  contractEndDate TEXT DEFAULT '',
+  annualLeaveBalance REAL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS budgets (
@@ -238,7 +254,8 @@ CREATE TABLE IF NOT EXISTS backup_schedule (
   frequency TEXT NOT NULL DEFAULT 'DAILY',
   time TEXT NOT NULL DEFAULT '23:00',
   target TEXT NOT NULL DEFAULT 'LOCAL',
-  enabled INTEGER NOT NULL DEFAULT 1
+  enabled INTEGER NOT NULL DEFAULT 1,
+  customPath TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS app_state (
@@ -363,6 +380,15 @@ CREATE TABLE IF NOT EXISTS accounting_periods (
   closedAt TEXT DEFAULT '',
   closedBy TEXT DEFAULT '',
   closingEntryId TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS license_activation (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  license_key TEXT NOT NULL,
+  machine_fingerprint TEXT NOT NULL,
+  activated_at INTEGER NOT NULL,
+  customer TEXT,
+  expires_at INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_accounts_code ON accounts(code);

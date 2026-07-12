@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { UserPlus, Edit2, Trash2, ShieldCheck, User, Eye, EyeOff, Save, X, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
-import { getSystemUsers, createSystemUser, updateSystemUser, deleteSystemUser } from '../services/api';
-import { UserPermissions, ROLE_PERMISSIONS } from '../types';
+import { UserPlus, Edit2, Trash2, ShieldCheck, User, Eye, EyeOff, Save, X, RefreshCw, CheckCircle, XCircle, Landmark, Settings, RefreshCcw, Database, AlertCircle, FolderOpen, Download, Upload } from 'lucide-react';
+import { getSystemUsers, createSystemUser, updateSystemUser, deleteSystemUser, resetDatabaseToDefault, restoreDatabaseBackup, fetchBackupsList, createDatabaseBackup, restoreFromExternalFile } from '../services/api';
+import { UserPermissions, ROLE_PERMISSIONS, ERPData, BackupSchedule } from '../types';
 
 interface UserManagementProps {
+  data: ERPData;
   lang: 'ar' | 'en';
   currentUsername: string;
+  onUpdateErpData: (next: ERPData) => Promise<void>;
+  onAddAuditLog: (actionAr: string, actionEn: string, details: string) => void;
 }
 
 const ROLES = [
@@ -57,16 +60,71 @@ const emptyPermissions = (): UserPermissions => ({
   period_closing: false, reports: false, audit_log: false, user_management: false,
 });
 
-export default function UserManagement({ lang, currentUsername }: UserManagementProps) {
+export default function UserManagement({ 
+  data, 
+  lang, 
+  currentUsername, 
+  onUpdateErpData, 
+  onAddAuditLog 
+}: UserManagementProps) {
   const isAr = lang === 'ar';
-  const [users, setUsers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editingUser, setEditingUser] = useState<any | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
+  
+  // Tabs: 'company' | 'general' | 'users' | 'reset'
+  const [activeTab, setActiveTab] = useState<'company' | 'general' | 'users' | 'reset'>('company');
 
-  const [form, setForm] = useState({
+  // 1. Company Profile Profile State
+  const [companyForm, setCompanyForm] = useState({
+    nameAr: data.companyProfile?.nameAr || 'لودينغ للأغذية',
+    nameEn: data.companyProfile?.nameEn || 'LODing Foods',
+    registrationNumber: data.companyProfile?.registrationNumber || 'ERP-2026-01',
+    taxNumber: data.companyProfile?.taxNumber || '123456789',
+    addressAr: data.companyProfile?.addressAr || '123 شارع المهندسين، الجيزة',
+    addressEn: data.companyProfile?.addressEn || 'Mohandessin St, Giza 123',
+    email: data.companyProfile?.email || 'info@loding-erp.com',
+    phone: data.companyProfile?.phone || '+20 2 1234 5678',
+    branches: data.companyProfile?.branches || 'الفرع الرئيسي, فرع الدقي, فرع مدينة نصر',
+    zakatRate: data.companyProfile?.zakatRate ?? 15
+  });
+
+  // 2. Backup General Settings State
+  const [backupForm, setBackupForm] = useState({
+    frequency: data.backupSchedule?.frequency || 'DAILY',
+    time: data.backupSchedule?.time || '23:00',
+    target: data.backupSchedule?.target || 'LOCAL',
+    enabled: data.backupSchedule?.enabled !== false,
+    customPath: data.backupSchedule?.customPath || ''
+  });
+
+  const [backupsList, setBackupsList] = useState<any[]>([]);
+  const [loadingBackups, setLoadingBackups] = useState(false);
+
+  const loadBackups = async () => {
+    setLoadingBackups(true);
+    try {
+      const list = await fetchBackupsList();
+      setBackupsList(list);
+    } catch (e) {
+      console.error('Failed to load backups list:', e);
+    } finally {
+      setLoadingBackups(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'general') {
+      loadBackups();
+    }
+  }, [activeTab, data.backupSchedule?.customPath]);
+
+  // 3. User Management States
+  const [users, setUsers] = useState<any[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(true);
+  const [showUserForm, setShowUserForm] = useState(false);
+  const [editingUser, setEditingUser] = useState<any | null>(null);
+  const [savingUser, setSavingUser] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  
+  const [userForm, setUserForm] = useState({
     nameAr: '',
     nameEn: '',
     username: '',
@@ -75,21 +133,72 @@ export default function UserManagement({ lang, currentUsername }: UserManagement
     permissions: ROLE_PERMISSIONS['accountant'] as UserPermissions,
   });
 
-  const loadUsers = async () => {
-    setLoading(true);
-    try {
-      const data = await getSystemUsers();
-      setUsers(data);
-    } catch (err: any) {
-      window.showAlert('فشل تحميل المستخدمين: ' + err.message, 'Failed to load users: ' + err.message, 'danger');
+  // 4. System Reset states
+  const [resetConfirm, setResetConfirm] = useState<string>('');
+  const [resetPassword, setResetPassword] = useState<string>('');
+  const [isResetting, setIsResetting] = useState<boolean>(false);
+
+  // Sync state changes from parent data
+  useEffect(() => {
+    if (data.companyProfile) {
+      setCompanyForm(data.companyProfile);
     }
-    setLoading(false);
+    if (data.backupSchedule) {
+      setBackupForm({
+        frequency: data.backupSchedule.frequency,
+        time: data.backupSchedule.time,
+        target: data.backupSchedule.target,
+        enabled: data.backupSchedule.enabled !== false,
+        customPath: data.backupSchedule.customPath || ''
+      });
+    }
+  }, [data]);
+
+  const loadUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const uData = await getSystemUsers();
+      setUsers(uData);
+    } catch (err: any) {
+      window.showAlert('فشل تحميل المستخدمين', 'Failed to load users', 'danger');
+    }
+    setLoadingUsers(false);
   };
 
-  useEffect(() => { loadUsers(); }, []);
+  useEffect(() => {
+    if (activeTab === 'users') {
+      loadUsers();
+    }
+  }, [activeTab]);
+
+  // Handle Save changes globally (based on current active setting tab)
+  const handleSaveSettings = async () => {
+    try {
+      if (activeTab === 'company') {
+        const nextData: ERPData = {
+          ...data,
+          companyProfile: companyForm
+        };
+        await onUpdateErpData(nextData);
+        onAddAuditLog('تحديث بيانات الشركة', 'Updated Company Profile', `تم تحديث ملف تعريف الشركة إلى: ${companyForm.nameAr}`);
+        window.showAlert('تم حفظ بيانات الشركة بنجاح', 'Company profile saved successfully', 'success');
+      } else if (activeTab === 'general') {
+        const nextData: ERPData = {
+          ...data,
+          backupSchedule: backupForm
+        };
+        await onUpdateErpData(nextData);
+        onAddAuditLog('تحديث إعدادات النسخ الاحتياطي', 'Updated Backup settings', `التردد: ${backupForm.frequency}`);
+        window.showAlert('تم حفظ إعدادات النظام بنجاح', 'General settings saved successfully', 'success');
+        loadBackups();
+      }
+    } catch (err: any) {
+      window.showAlert('فشل الحفظ: ' + (err.message || 'خطأ غير معروف'), 'Save failed: ' + (err.message || 'Unknown error'), 'danger');
+    }
+  };
 
   const handleRoleChange = (role: string) => {
-    setForm(prev => ({
+    setUserForm(prev => ({
       ...prev,
       role,
       permissions: role !== 'custom' ? { ...(ROLE_PERMISSIONS[role] || emptyPermissions()) } : prev.permissions
@@ -97,61 +206,63 @@ export default function UserManagement({ lang, currentUsername }: UserManagement
   };
 
   const handlePermToggle = (key: keyof UserPermissions) => {
-    setForm(prev => ({
+    setUserForm(prev => ({
       ...prev,
       role: 'custom',
       permissions: { ...prev.permissions, [key]: !prev.permissions[key] }
     }));
   };
 
-  const openNew = () => {
+  const openNewUser = () => {
     setEditingUser(null);
-    setForm({ nameAr: '', nameEn: '', username: '', password: '', role: 'accountant', permissions: { ...ROLE_PERMISSIONS['accountant'] } });
-    setShowForm(true);
+    setUserForm({ nameAr: '', nameEn: '', username: '', password: '', role: 'accountant', permissions: { ...ROLE_PERMISSIONS['accountant'] } });
+    setShowUserForm(true);
   };
 
-  const openEdit = (u: any) => {
+  const openEditUser = (u: any) => {
     setEditingUser(u);
     const existingPerms = u.permissions ? (() => { try { return JSON.parse(u.permissions); } catch { return null; } })() : null;
     const role = u.role || 'viewer';
     const perms = existingPerms || ROLE_PERMISSIONS[role] || emptyPermissions();
-    setForm({ nameAr: u.nameAr || '', nameEn: u.nameEn || '', username: u.username, password: '', role, permissions: perms });
-    setShowForm(true);
+    setUserForm({ nameAr: u.nameAr || '', nameEn: u.nameEn || '', username: u.username, password: '', role, permissions: perms });
+    setShowUserForm(true);
   };
 
-  const handleSave = async () => {
-    if (!form.username.trim()) {
+  const handleSaveUser = async () => {
+    if (!userForm.username.trim()) {
       window.showAlert('اسم المستخدم مطلوب', 'Username is required', 'warning');
       return;
     }
-    if (!editingUser && !form.password.trim()) {
-      window.showAlert('كلمة المرور مطلوبة للحسابات الجديدة', 'Password is required for new users', 'warning');
+    if (!editingUser && !userForm.password.trim()) {
+      window.showAlert('كلمة المرور مطلوبة', 'Password is required', 'warning');
       return;
     }
-    setSaving(true);
+    setSavingUser(true);
     try {
       const payload: any = {
-        nameAr: form.nameAr,
-        nameEn: form.nameEn,
-        role: form.role,
-        permissions: form.permissions,
+        nameAr: userForm.nameAr,
+        nameEn: userForm.nameEn,
+        role: userForm.role,
+        permissions: userForm.permissions,
       };
       if (!editingUser) {
-        payload.username = form.username;
-        payload.password = form.password;
+        payload.username = userForm.username;
+        payload.password = userForm.password;
         await createSystemUser(payload);
+        onAddAuditLog('إنشاء مستخدم جديد', 'Created new user', `تم إنشاء مستخدم: ${userForm.username}`);
         window.showAlert('تم إنشاء الحساب بنجاح', 'Account created successfully', 'success');
       } else {
-        if (form.password.trim()) payload.password = form.password;
+        if (userForm.password.trim()) payload.password = userForm.password;
         await updateSystemUser(editingUser.id, payload);
+        onAddAuditLog('تعديل صلاحيات مستخدم', 'Updated user settings', `تم تعديل مستخدم: ${userForm.username}`);
         window.showAlert('تم تحديث الحساب بنجاح', 'Account updated successfully', 'success');
       }
-      setShowForm(false);
+      setShowUserForm(false);
       loadUsers();
     } catch (err: any) {
       window.showAlert('خطأ: ' + err.message, 'Error: ' + err.message, 'danger');
     }
-    setSaving(false);
+    setSavingUser(false);
   };
 
   const handleToggleActive = async (u: any) => {
@@ -164,7 +275,7 @@ export default function UserManagement({ lang, currentUsername }: UserManagement
     }
   };
 
-  const handleDelete = async (u: any) => {
+  const handleDeleteUser = async (u: any) => {
     window.showConfirm(
       `هل أنت متأكد من حذف حساب "${u.username}"؟`,
       `Are you sure you want to delete "${u.username}"?`,
@@ -188,276 +299,672 @@ export default function UserManagement({ lang, currentUsername }: UserManagement
     modules: PERMISSION_MODULES.filter(m => m.group === g)
   }));
 
+  // Handle system database operational reset
+  const handleSystemReset = () => {
+    const cleanConfirm = resetConfirm.trim().toLowerCase();
+    const cleanAr = resetConfirm.trim().replace('أ', 'ا').replace('إ', 'ا');
+    if (cleanConfirm !== 'reset' && cleanAr !== 'إعادة تعيين' && cleanAr !== 'اعادة تعيين') {
+      window.showAlert('يرجى كتابة الكلمة التأكيدية بشكل صحيح (RESET أو إعادة تعيين)', 'Please enter validation key to confirm (RESET or إعادة تعيين)', 'warning');
+      return;
+    }
+    if (!resetPassword.trim()) {
+      window.showAlert('يرجى إدخال كلمة المرور الحالية للتحقق', 'Password is required to proceed', 'warning');
+      return;
+    }
+
+    setIsResetting(true);
+    window.showConfirm(
+      'تحذير! هل أنت متأكد تماماً من حذف كافة العمليات والبيانات المالية وتصفير الأرصدة؟ لا يمكن الرجوع عن هذا الإجراء.',
+      'WARNING! Are you absolutely sure you want to wipe all operational data and reset balances to zero? This action is irreversible.',
+      async () => {
+        try {
+          const res = await resetDatabaseToDefault(resetPassword);
+          window.showAlert(res.messageAr, res.messageEn, 'success');
+          setTimeout(() => {
+            window.location.reload();
+          }, 1500);
+        } catch (err: any) {
+          window.showAlert('فشل إعادة التهيئة: ' + err.message, 'Reset failed: ' + err.message, 'danger');
+        } finally {
+          setIsResetting(false);
+        }
+      }
+    );
+  };
+
   return (
     <div className="space-y-6" dir={isAr ? 'rtl' : 'ltr'}>
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      
+      {/* 1. Header with Global Save changes button */}
+      <div className="flex items-center justify-between bg-white dark:bg-slate-950 p-4 border border-slate-150/60 dark:border-slate-850 rounded-2xl">
         <div>
           <h1 className="text-xl font-black text-slate-900 dark:text-white">
-            {isAr ? 'إدارة المستخدمين والصلاحيات' : 'User & Permissions Management'}
+            {isAr ? 'الإعدادات وإدارة المستخدمين' : 'System Settings & Users'}
           </h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            {isAr ? 'إنشاء حسابات الموظفين وتحديد صلاحيات وصولهم لكل قسم' : 'Create employee accounts and define their access to each module'}
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-semibold">
+            {isAr ? 'تكوين بيانات الشركة، إعدادات النظام، وصلاحيات المستخدمين' : 'Configure company profile, general configurations, and user access permissions'}
           </p>
         </div>
-        <button
-          id="btn_add_user"
-          onClick={openNew}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
-        >
-          <UserPlus className="h-4 w-4" />
-          {isAr ? 'إضافة مستخدم جديد' : 'Add New User'}
-        </button>
-      </div>
 
-      {/* Users Table */}
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="h-8 w-8 border-4 border-blue-600/20 border-t-blue-600 rounded-full animate-spin" />
-          </div>
-        ) : users.length === 0 ? (
-          <div className="text-center py-12 text-slate-400 text-xs font-bold">
-            {isAr ? 'لا يوجد مستخدمون مسجلون' : 'No users found'}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
-                <tr>
-                  <th className="px-4 py-3 text-start font-bold text-slate-600 dark:text-slate-400">{isAr ? 'المستخدم' : 'User'}</th>
-                  <th className="px-4 py-3 text-start font-bold text-slate-600 dark:text-slate-400">{isAr ? 'اسم المستخدم' : 'Username'}</th>
-                  <th className="px-4 py-3 text-start font-bold text-slate-600 dark:text-slate-400">{isAr ? 'الدور' : 'Role'}</th>
-                  <th className="px-4 py-3 text-start font-bold text-slate-600 dark:text-slate-400">{isAr ? 'الحالة' : 'Status'}</th>
-                  <th className="px-4 py-3 text-start font-bold text-slate-600 dark:text-slate-400">{isAr ? 'آخر دخول' : 'Last Login'}</th>
-                  <th className="px-4 py-3 text-start font-bold text-slate-600 dark:text-slate-400">{isAr ? 'إجراءات' : 'Actions'}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {users.map(u => {
-                  const roleInfo = getRoleInfo(u.role);
-                  const isSelf = u.username === currentUsername;
-                  return (
-                    <tr key={u.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          <div className={`h-8 w-8 rounded-full flex items-center justify-center font-black text-white text-[10px] ${roleInfo.color}`}>
-                            {(u.nameAr || u.username).substring(0, 2).toUpperCase()}
-                          </div>
-                          <div>
-                            <div className="font-bold text-slate-800 dark:text-slate-200">{isAr ? (u.nameAr || u.username) : (u.nameEn || u.username)}</div>
-                            {isSelf && <span className="text-[9px] bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded font-bold">{isAr ? 'أنت' : 'You'}</span>}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 font-mono text-slate-600 dark:text-slate-400">{u.username}</td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-black text-white ${roleInfo.color}`}>
-                          {isAr ? roleInfo.labelAr : roleInfo.labelEn}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`flex items-center gap-1 font-bold text-[10px] ${u.active ? 'text-green-600 dark:text-green-400' : 'text-slate-400'}`}>
-                          {u.active ? <CheckCircle className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
-                          {u.active ? (isAr ? 'نشط' : 'Active') : (isAr ? 'معطل' : 'Disabled')}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
-                        {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString(isAr ? 'ar-EG' : 'en-US') : (isAr ? 'لم يسجل دخول' : 'Never')}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => openEdit(u)}
-                            title={isAr ? 'تعديل' : 'Edit'}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors"
-                          >
-                            <Edit2 className="h-3.5 w-3.5" />
-                          </button>
-                          {!isSelf && (
-                            <>
-                              <button
-                                onClick={() => handleToggleActive(u)}
-                                title={u.active ? (isAr ? 'تعطيل' : 'Disable') : (isAr ? 'تفعيل' : 'Enable')}
-                                className={`p-1.5 rounded-lg transition-colors ${u.active ? 'text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30' : 'text-slate-400 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-950/30'}`}
-                              >
-                                <ShieldCheck className="h-3.5 w-3.5" />
-                              </button>
-                              {u.role !== 'admin' && (
-                                <button
-                                  onClick={() => handleDelete(u)}
-                                  title={isAr ? 'حذف' : 'Delete'}
-                                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+        {(activeTab === 'company' || activeTab === 'general') && (
+          <button
+            onClick={handleSaveSettings}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black rounded-xl transition-all shadow-md cursor-pointer"
+          >
+            <Save className="h-4 w-4" />
+            <span>{isAr ? 'حفظ التغييرات' : 'Save Changes'}</span>
+          </button>
+        )}
+
+        {activeTab === 'users' && !showUserForm && (
+          <button
+            onClick={openNewUser}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black rounded-xl transition-all shadow-md cursor-pointer"
+          >
+            <UserPlus className="h-4 w-4" />
+            <span>{isAr ? 'إضافة مستخدم جديد' : 'Add New User'}</span>
+          </button>
         )}
       </div>
 
-      {/* Create/Edit Modal */}
-      {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-3">
-                <div className="h-9 w-9 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                  <User className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+      {/* 2. Side-by-Side Flex Layout (Tabs on Right, Content Panel on Left in RTL) */}
+      <div className="flex flex-col lg:flex-row gap-6">
+        
+        {/* LEFT PANEL: Form Contents (expands) */}
+        <div className="flex-1 bg-white dark:bg-slate-955 border border-slate-150/60 dark:border-slate-850 rounded-2xl p-6 shadow-xs min-h-[450px]">
+          
+          {/* TAB 1: Company Profile (بيانات الشركة) */}
+          {activeTab === 'company' && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-900">
+                <Landmark className="h-5 w-5 text-blue-600" />
+                <h3 className="text-sm font-black text-slate-900 dark:text-white">{isAr ? 'بيانات الشركة' : 'Company Profile details'}</h3>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-xs font-bold text-slate-700 dark:text-slate-350">
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'اسم الشركة (عربي)' : 'Company Name (Arabic)'}</label>
+                  <input 
+                    type="text" 
+                    value={companyForm.nameAr}
+                    onChange={e => setCompanyForm({ ...companyForm, nameAr: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-850 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-950 dark:text-white"
+                  />
                 </div>
                 <div>
-                  <h2 className="text-sm font-black text-slate-900 dark:text-white">
-                    {editingUser ? (isAr ? 'تعديل الحساب' : 'Edit Account') : (isAr ? 'إضافة مستخدم جديد' : 'Add New User')}
-                  </h2>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                    {isAr ? 'حدد الدور والصلاحيات المناسبة' : 'Set the role and appropriate permissions'}
-                  </p>
+                  <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'اسم الشركة (إنجليزي)' : 'Company Name (English)'}</label>
+                  <input 
+                    type="text" 
+                    value={companyForm.nameEn}
+                    onChange={e => setCompanyForm({ ...companyForm, nameEn: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-850 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-950 dark:text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'رقم التسجيل (السجل التجاري)' : 'Commercial Registration Number'}</label>
+                  <input 
+                    type="text" 
+                    value={companyForm.registrationNumber}
+                    onChange={e => setCompanyForm({ ...companyForm, registrationNumber: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-850 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-955 dark:text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'رقم ضريبي' : 'Tax Card Number (VAT)'}</label>
+                  <input 
+                    type="text" 
+                    value={companyForm.taxNumber}
+                    onChange={e => setCompanyForm({ ...companyForm, taxNumber: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-850 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-955 dark:text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'العنوان (عربي)' : 'Location Address (Arabic)'}</label>
+                  <input 
+                    type="text" 
+                    value={companyForm.addressAr}
+                    onChange={e => setCompanyForm({ ...companyForm, addressAr: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-850 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-955 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'العنوان (إنجليزي)' : 'Location Address (English)'}</label>
+                  <input 
+                    type="text" 
+                    value={companyForm.addressEn}
+                    onChange={e => setCompanyForm({ ...companyForm, addressEn: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-850 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-955 dark:text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'البريد الإلكتروني' : 'Official Email Address'}</label>
+                  <input 
+                    type="email" 
+                    value={companyForm.email}
+                    onChange={e => setCompanyForm({ ...companyForm, email: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-850 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-955 dark:text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'الهاتف' : 'Contact Telephone'}</label>
+                  <input 
+                    type="text" 
+                    value={companyForm.phone}
+                    onChange={e => setCompanyForm({ ...companyForm, phone: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-850 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-955 dark:text-white font-mono"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'الفروع الفعالة بالنظام (مفصولة بفاصلة ,)' : 'Active System Branches (comma-separated ,)'}</label>
+                  <input 
+                    type="text" 
+                    value={companyForm.branches || ''}
+                    onChange={e => setCompanyForm({ ...companyForm, branches: e.target.value })}
+                    placeholder={isAr ? 'مثال: الفرع الرئيسي, فرع الدقي, فرع التجمع' : 'e.g. Main Branch, Dokki Branch, Tagamoa Branch'}
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-850 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-955 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'نسبة مخصص الزكاة وضريبة الدخل (%)' : 'Zakat & Tax Provision Rate (%)'}</label>
+                  <input 
+                    type="number" 
+                    min="0" max="100" step="0.5"
+                    value={companyForm.zakatRate}
+                    onChange={e => setCompanyForm({ ...companyForm, zakatRate: +e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-850 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-955 dark:text-white font-mono"
+                  />
                 </div>
               </div>
-              <button onClick={() => setShowForm(false)} className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
-                <X className="h-4 w-4 text-slate-500" />
-              </button>
             </div>
+          )}
 
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
-              {/* Basic Info */}
-              <div className="grid grid-cols-2 gap-4">
+          {/* TAB 2: General settings (الإعدادات العامة) */}
+          {activeTab === 'general' && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-900">
+                <Settings className="h-5 w-5 text-blue-600" />
+                <h3 className="text-sm font-black text-slate-900 dark:text-white">{isAr ? 'إعدادات النظام والنسخ الاحتياطي' : 'General Configuration & Backup Schedule'}</h3>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-xs font-bold text-slate-700 dark:text-slate-350">
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">{isAr ? 'الاسم بالعربي' : 'Name (Arabic)'}</label>
-                  <input
-                    value={form.nameAr}
-                    onChange={e => setForm(p => ({ ...p, nameAr: e.target.value }))}
-                    className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    placeholder="محمد أحمد"
+                  <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'تكرار النسخ الاحتياطي التلقائي' : 'Backup Frequency'}</label>
+                  <select 
+                    value={backupForm.frequency}
+                    onChange={e => setBackupForm({ ...backupForm, frequency: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-250 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-950 dark:text-white"
+                  >
+                    <option value="DAILY">{isAr ? 'يومياً' : 'Daily'}</option>
+                    <option value="WEEKLY">{isAr ? 'أسبوعياً' : 'Weekly'}</option>
+                    <option value="MONTHLY">{isAr ? 'شهرياً' : 'Monthly'}</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'وقت النسخ (صيغة 24 ساعة)' : 'Backup Execution Time (24h format)'}</label>
+                  <input 
+                    type="text" 
+                    value={backupForm.time}
+                    onChange={e => setBackupForm({ ...backupForm, time: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-250 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-955 dark:text-white font-mono"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">{isAr ? 'الاسم بالإنجليزي' : 'Name (English)'}</label>
-                  <input
-                    value={form.nameEn}
-                    onChange={e => setForm(p => ({ ...p, nameEn: e.target.value }))}
-                    className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    placeholder="Mohamed Ahmed"
-                  />
+                  <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'الوجهة المستهدفة لحفظ الملف' : 'Backup Target Destination'}</label>
+                  <select 
+                    value={backupForm.target}
+                    onChange={e => setBackupForm({ ...backupForm, target: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-250 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-955 dark:text-white"
+                  >
+                    <option value="LOCAL">{isAr ? 'تخزين محلي (Local Disk)' : 'Local Storage Disk'}</option>
+                    <option value="USB">{isAr ? 'قرص خارجي USB' : 'External USB Flash'}</option>
+                    <option value="LAN">{isAr ? 'الشبكة المحلية LAN' : 'Local LAN Drive'}</option>
+                  </select>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">{isAr ? 'اسم المستخدم (للدخول)' : 'Username (for login)'}</label>
-                  <input
-                    value={form.username}
-                    onChange={e => setForm(p => ({ ...p, username: e.target.value }))}
-                    disabled={!!editingUser}
-                    className="w-full text-xs font-mono px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50"
-                    placeholder="accountant01"
+                <div className="flex items-center gap-3 pt-5">
+                  <input 
+                    type="checkbox" 
+                    id="auto_backup_enabled"
+                    checked={backupForm.enabled}
+                    onChange={e => setBackupForm({ ...backupForm, enabled: e.target.checked })}
+                    className="h-4.5 w-4.5 rounded border-slate-250 text-blue-600 focus:ring-blue-500 cursor-pointer"
                   />
+                  <label htmlFor="auto_backup_enabled" className="text-xs font-black text-slate-800 dark:text-slate-200 select-none cursor-pointer">
+                    {isAr ? 'تفعيل النسخ الاحتياطي التلقائي المبرمج' : 'Enable automated backup schedule'}
+                  </label>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                    {editingUser ? (isAr ? 'كلمة مرور جديدة (اتركها فارغة للإبقاء)' : 'New password (leave blank to keep)') : (isAr ? 'كلمة المرور' : 'Password')}
+
+                {/* Custom backup directory path input */}
+                <div className="md:col-span-2">
+                  <label className="text-[10px] text-slate-400 block mb-1">
+                    {isAr ? 'مسار مجلد النسخ الاحتياطي المخصص (اختر من المجلدات أو اكتب يدوياً)' : 'Custom Backup Folder Path (pick a folder or type path)'}
                   </label>
                   <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      value={form.password}
-                      onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
-                      className="w-full text-xs px-3 py-2 pe-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                      placeholder="••••••••"
+                    <input 
+                      type="text" 
+                      value={backupForm.customPath || ''}
+                      onChange={e => setBackupForm({ ...backupForm, customPath: e.target.value })}
+                      placeholder={isAr ? 'مثال: D:\\backups (اتركه فارغاً للحفظ في المسار الافتراضي للبرنامج)' : 'e.g. D:\\backups (Leave empty for default app path)'}
+                      className="w-full px-3 py-2.5 border border-slate-250 rounded-xl bg-slate-50 dark:bg-slate-950 text-slate-950 dark:text-white font-mono"
                     />
-                    <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute inset-y-0 end-2.5 flex items-center text-slate-400">
-                      {showPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (window.electronAPI?.selectFolder) {
+                          const folder = await window.electronAPI.selectFolder();
+                          if (folder) setBackupForm({ ...backupForm, customPath: folder });
+                        }
+                      }}
+                      className={`absolute ${isAr ? 'left-3' : 'right-3'} top-3 cursor-pointer`}
+                    >
+                      <FolderOpen className="h-4.5 w-4.5 text-slate-400 hover:text-blue-500 transition-colors" />
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-450 mt-1 font-semibold">
+                    {isAr 
+                      ? '⚠️ يرجى التأكد من كتابة اسم القرص والمسار بشكل صحيح. سيقوم النظام بإنشاء المجلد تلقائياً إذا لم يكن موجوداً.' 
+                      : '⚠️ Please ensure you write the disk letter and folder path correctly. The system will create the folder if it does not exist.'}
+                  </p>
+                </div>
+
+                {/* Backups list & Action center */}
+                <div className="md:col-span-2 mt-4 space-y-4">
+                  <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
+                    <span className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                      <Database className="h-4 w-4 text-emerald-600" />
+                      {isAr ? 'سجل النسخ الاحتياطية المتاحة على هذا المسار' : 'Available Backups Registry'}
+                    </span>
+                    
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const res = await createDatabaseBackup();
+                            window.showAlert(res.messageAr, res.messageEn, 'success');
+                            loadBackups();
+                          } catch (err: any) {
+                            window.showAlert('خطأ أثناء النسخ الاحتياطي: ' + err.message, 'Error: ' + err.message, 'danger');
+                          }
+                        }}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl text-[10px] flex items-center gap-1 cursor-pointer"
+                      >
+                        <Download className="h-3 w-3" />
+                        {isAr ? 'إنشاء نسخة احتياطية الآن' : 'Backup Now'}
+                      </button>
+                      
+                      <button
+                        type="button"
+                        onClick={loadBackups}
+                        className="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-350 font-bold px-3 py-1.5 rounded-xl text-[10px] flex items-center gap-1 cursor-pointer"
+                      >
+                        <RefreshCw className={`h-3 w-3 ${loadingBackups ? 'animate-spin' : ''}`} />
+                        {isAr ? 'تحديث القائمة' : 'Refresh list'}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!window.electronAPI?.selectBackupFile) {
+                            window.showAlert('هذه الميزة متاحة فقط في تطبيق سطح المكتب', 'This feature is only available in the desktop app', 'warning');
+                            return;
+                          }
+                          const filePath = await window.electronAPI.selectBackupFile();
+                          if (!filePath) return;
+                          window.showConfirm(
+                            `⚠️ هل أنت متأكد من استعادة النسخة الاحتياطية من هذا الملف؟ (${filePath})
+سيؤدي ذلك إلى استبدال كافة البيانات الحالية بالبيانات التاريخية المحفوظة في هذا الملف، وإعادة تشغيل التطبيق تلقائياً.`,
+                            `⚠️ Are you sure you want to restore from this backup file? (${filePath})
+This will overwrite all active transaction ledgers with the contents of this file, and automatically restart the application.`,
+                            async () => {
+                              try {
+                                const res = await restoreFromExternalFile(filePath);
+                                window.showAlert(res.messageAr, res.messageEn, 'success');
+                              } catch (err: any) {
+                                window.showAlert('خطأ أثناء استعادة النسخة: ' + err.message, 'Error restoring: ' + err.message, 'danger');
+                              }
+                            }
+                          );
+                        }}
+                        className="bg-amber-50 hover:bg-amber-100 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400 font-bold px-3 py-1.5 rounded-xl text-[10px] flex items-center gap-1 cursor-pointer border border-amber-200 dark:border-amber-900/50"
+                      >
+                        <Upload className="h-3 w-3" />
+                        {isAr ? 'استعادة من ملف' : 'Restore from file'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {loadingBackups ? (
+                    <div className="py-6 text-center text-slate-400 font-bold">
+                      {isAr ? 'جاري قراءة قائمة النسخ الاحتياطية...' : 'Scanning backup directory...'}
+                    </div>
+                  ) : backupsList.length === 0 ? (
+                    <div className="py-6 text-center text-slate-400 font-bold border border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
+                      {isAr 
+                        ? '⚠️ لا يوجد ملفات نسخ احتياطي حالياً في هذا المجلد. اضغط على "إنشاء نسخة احتياطية الآن" لحفظ أول نسخة.' 
+                        : '⚠️ No backup files found in this folder. Click "Backup Now" to create your first backup.'}
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto border border-slate-100 dark:border-slate-850 rounded-xl">
+                      <table className="w-full text-start border-collapse text-[11px]">
+                        <thead>
+                          <tr className="bg-slate-50 dark:bg-slate-900/50 text-slate-450 border-b border-slate-100 dark:border-slate-850 font-black">
+                            <th className="p-3 text-start">{isAr ? 'اسم ملف النسخة الاحتياطية' : 'Backup File Name'}</th>
+                            <th className="p-3 text-center">{isAr ? 'تاريخ الحفظ' : 'Created Date'}</th>
+                            <th className="p-3 text-center">{isAr ? 'الحجم' : 'File Size'}</th>
+                            <th className="p-3 text-center">{isAr ? 'الإجراء' : 'Action'}</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-150 dark:divide-slate-850">
+                          {backupsList.map((backup, idx) => {
+                            const sizeMB = (backup.sizeBytes / (1024 * 1024)).toFixed(2);
+                            const dateStr = new Date(backup.createdAt).toLocaleString(isAr ? 'ar-EG' : 'en-US');
+                            return (
+                              <tr key={backup.fileName} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors font-semibold text-slate-700 dark:text-slate-350">
+                                <td className="p-3 font-mono text-xs max-w-xs truncate text-blue-600 dark:text-blue-400" title={backup.fileName}>
+                                  📄 {backup.fileName}
+                                </td>
+                                <td className="p-3 text-center font-bold">{dateStr}</td>
+                                <td className="p-3 text-center font-bold font-mono">{sizeMB} MB</td>
+                                <td className="p-3 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      window.showConfirm(
+                                        `⚠️ هل أنت متأكد من استعادة هذه النسخة الاحتياطية المحددة؟ (${backup.fileName})
+سيؤدي ذلك إلى استبدال كافة البيانات الحالية بالبيانات التاريخية المحفوظة في هذا الملف، وإعادة تشغيل التطبيق تلقائياً.`,
+                                        `⚠️ Are you sure you want to restore this specific backup? (${backup.fileName})
+This will overwrite all active transaction ledgers with the contents of this file, and automatically restart the application.`,
+                                        async () => {
+                                          try {
+                                            const res = await restoreDatabaseBackup(backup.fileName);
+                                            window.showAlert(res.messageAr, res.messageEn, 'success');
+                                          } catch (err: any) {
+                                            window.showAlert('خطأ أثناء استعادة النسخة: ' + err.message, 'Error restoring: ' + err.message, 'danger');
+                                          }
+                                        }
+                                      );
+                                    }}
+                                    className="bg-blue-55 hover:bg-blue-100 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 font-bold px-3 py-1 rounded-lg transition-all cursor-pointer border border-blue-100 dark:border-blue-900/50"
+                                  >
+                                    🔄 {isAr ? 'استعادة هذه النسخة' : 'Restore'}
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: User list & access permissions (إدارة المستخدمين) */}
+          {activeTab === 'users' && (
+            <div className="space-y-6">
+              
+              {!showUserForm ? (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-900">
+                    <User className="h-5 w-5 text-blue-600" />
+                    <h3 className="text-sm font-black text-slate-900 dark:text-white">{isAr ? 'مستخدمي النظام وصلاحياتهم' : 'System Accounts & Staff Roles'}</h3>
+                  </div>
+
+                  {loadingUsers ? (
+                    <div className="flex items-center justify-center py-12">
+                      <div className="h-8 w-8 border-4 border-blue-600/20 border-t-blue-600 rounded-full animate-spin" />
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs text-start">
+                        <thead>
+                          <tr className="border-b border-slate-100 dark:border-slate-850 text-slate-400 font-extrabold uppercase">
+                            <th className="py-2.5 px-3 text-start">{isAr ? 'المستخدم' : 'User'}</th>
+                            <th className="py-2.5 px-3 text-start">{isAr ? 'اسم الدخول' : 'Username'}</th>
+                            <th className="py-2.5 px-3 text-start">{isAr ? 'الدور الوظيفي' : 'Role'}</th>
+                            <th className="py-2.5 px-3 text-start">{isAr ? 'الحالة' : 'Status'}</th>
+                            <th className="py-2.5 px-3 text-start">{isAr ? 'الإجراءات' : 'Actions'}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {users.map(u => {
+                            const roleInfo = getRoleInfo(u.role);
+                            const isSelf = u.username === currentUsername;
+                            return (
+                              <tr key={u.id} className="border-b border-slate-50 dark:border-slate-900/60 hover:bg-slate-50/50">
+                                <td className="py-2.5 px-3 font-bold text-slate-800 dark:text-white">
+                                  {isAr ? (u.nameAr || u.username) : (u.nameEn || u.username)}
+                                </td>
+                                <td className="py-2.5 px-3 font-mono text-slate-550">{u.username}</td>
+                                <td className="py-2.5 px-3">
+                                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-black text-white ${roleInfo.color}`}>
+                                    {isAr ? roleInfo.labelAr : roleInfo.labelEn}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <button 
+                                    onClick={() => !isSelf && handleToggleActive(u)}
+                                    disabled={isSelf}
+                                    className={`font-black text-[10px] cursor-pointer hover:underline ${u.active ? 'text-green-600' : 'text-slate-405'}`}
+                                  >
+                                    {u.active ? (isAr ? 'نشط' : 'Active') : (isAr ? 'معطل' : 'Disabled')}
+                                  </button>
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <div className="flex gap-2">
+                                    <button onClick={() => openEditUser(u)} className="p-1 rounded bg-slate-100 hover:bg-slate-205 text-slate-600 cursor-pointer"><Edit2 className="h-3 w-3" /></button>
+                                    {!isSelf && u.role !== 'admin' && (
+                                      <button onClick={() => handleDeleteUser(u)} className="p-1 rounded bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/30 cursor-pointer"><Trash2 className="h-3 w-3" /></button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                
+                // Add/Edit User Access Form
+                <div className="space-y-5">
+                  <div className="flex justify-between items-center pb-3 border-b border-slate-100 dark:border-slate-900">
+                    <span className="text-sm font-black text-slate-950 dark:text-white">
+                      {editingUser ? (isAr ? 'تعديل حساب مستخدم' : 'Edit User Settings') : (isAr ? 'إنشاء حساب جديد' : 'New User Setup')}
+                    </span>
+                    <button onClick={() => setShowUserForm(false)} className="p-1 text-slate-400 hover:bg-slate-150 rounded"><X className="h-4 w-4" /></button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 text-xs font-bold text-slate-700 dark:text-slate-350">
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'الاسم بالكامل (عربي)' : 'Full Name (Arabic)'}</label>
+                      <input type="text" value={userForm.nameAr} onChange={e => setUserForm({ ...userForm, nameAr: e.target.value })} className="w-full px-3 py-2 border border-slate-200 dark:border-slate-800 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-950 dark:text-white" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'الاسم بالكامل (إنجليزي)' : 'Full Name (English)'}</label>
+                      <input type="text" value={userForm.nameEn} onChange={e => setUserForm({ ...userForm, nameEn: e.target.value })} className="w-full px-3 py-2 border border-slate-200 dark:border-slate-800 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-950 dark:text-white font-mono" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'اسم المستخدم للدخول' : 'Access Username'}</label>
+                      <input type="text" disabled={!!editingUser} value={userForm.username} onChange={e => setUserForm({ ...userForm, username: e.target.value })} className="w-full px-3 py-2 border border-slate-200 dark:border-slate-800 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-950 dark:text-white font-mono disabled:opacity-50" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'كلمة المرور' : 'Secret Password'}</label>
+                      <div className="relative">
+                        <input type={showPassword ? 'text' : 'password'} value={userForm.password} onChange={e => setUserForm({ ...userForm, password: e.target.value })} className="w-full px-3 py-2 border border-slate-200 dark:border-slate-800 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-955 dark:text-white font-mono" />
+                        <button onClick={() => setShowPassword(!showPassword)} className={`absolute ${isAr ? 'left-2.5' : 'right-2.5'} top-2.5 text-slate-405`}>
+                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'الدور والصلاحية الافتراضية' : 'System Role Group'}</label>
+                      <select value={userForm.role} onChange={e => handleRoleChange(e.target.value)} className="w-full px-3 py-2 border border-slate-200 dark:border-slate-800 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-950 dark:text-white font-bold">
+                        {ROLES.map(r => (
+                          <option key={r.value} value={r.value}>{isAr ? r.labelAr : r.labelEn}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Modules Permissions list */}
+                  <div className="space-y-4 pt-4 border-t border-slate-100">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">{isAr ? 'تفاصيل صلاحيات الدخول للوحدات والصفحات:' : 'Fine-grained module access rights:'}</span>
+                    
+                    {groupedModules.map(group => (
+                      <div key={group.key} className="space-y-2 p-3.5 bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-slate-100 dark:border-slate-850">
+                        <span className="text-[11px] font-black text-blue-650 block">{isAr ? group.ar : group.en}</span>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1 text-[11px]">
+                          {group.modules.map(mod => (
+                            <button
+                              key={mod.key}
+                              onClick={() => handlePermToggle(mod.key)}
+                              className={`p-2 rounded-lg text-start flex items-center gap-2 border font-bold transition-all ${
+                                userForm.permissions[mod.key]
+                                  ? 'bg-blue-600 border-blue-600 text-white shadow-xs'
+                                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-100'
+                              }`}
+                            >
+                              <div className={`h-3 w-3 rounded-full ${userForm.permissions[mod.key] ? 'bg-white' : 'bg-slate-350'}`} />
+                              <span>{isAr ? mod.labelAr : mod.labelEn}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2 justify-end pt-4 border-t border-slate-100">
+                    <button onClick={() => setShowUserForm(false)} className="px-4 py-2 text-xs font-bold rounded-lg bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800">{isAr ? 'إلغاء' : 'Cancel'}</button>
+                    <button onClick={handleSaveUser} disabled={savingUser} className="px-5 py-2 text-xs font-black rounded-lg bg-blue-600 text-white hover:bg-blue-700 shadow-md">
+                      {savingUser ? (isAr ? 'جاري الحفظ...' : 'Saving...') : (isAr ? 'حفظ الحساب' : 'Save User')}
                     </button>
                   </div>
                 </div>
-              </div>
+              )}
 
-              {/* Role Selector */}
-              <div>
-                <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-2">{isAr ? 'الدور الوظيفي' : 'Role'}</label>
-                <div className="flex flex-wrap gap-2">
-                  {ROLES.map(r => (
-                    <button
-                      key={r.value}
-                      type="button"
-                      onClick={() => handleRoleChange(r.value)}
-                      className={`px-3 py-1.5 rounded-xl text-[10px] font-bold transition-all border-2 ${
-                        form.role === r.value
-                          ? `${r.color} text-white border-transparent shadow-sm`
-                          : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-blue-400 bg-transparent'
-                      }`}
-                    >
-                      {isAr ? r.labelAr : r.labelEn}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Permissions Grid */}
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400">{isAr ? 'الصلاحيات التفصيلية' : 'Detailed Permissions'}</label>
-                  <span className="text-[9px] text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg font-bold">
-                    {isAr ? 'اضغط على أي صلاحية لتعديلها' : 'Click any permission to toggle it'}
-                  </span>
-                </div>
-                <div className="space-y-3">
-                  {groupedModules.map(group => (
-                    <div key={group.key} className="bg-slate-50 dark:bg-slate-800/40 rounded-xl p-3">
-                      <h4 className="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">
-                        {isAr ? group.ar : group.en}
-                      </h4>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        {group.modules.map(mod => (
-                          <button
-                            key={mod.key}
-                            type="button"
-                            onClick={() => handlePermToggle(mod.key)}
-                            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[10px] font-bold transition-all text-start ${
-                              form.permissions[mod.key]
-                                ? 'bg-blue-500 text-white shadow-sm'
-                                : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700'
-                            }`}
-                          >
-                            <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${form.permissions[mod.key] ? 'bg-white' : 'bg-slate-300 dark:bg-slate-600'}`} />
-                            {isAr ? mod.labelAr : mod.labelEn}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </div>
+          )}
 
-            {/* Modal Footer */}
-            <div className="flex items-center justify-end gap-3 p-4 border-t border-slate-100 dark:border-slate-800">
-              <button
-                onClick={() => setShowForm(false)}
-                className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
-              >
-                {isAr ? 'إلغاء' : 'Cancel'}
-              </button>
-              <button
-                id="btn_save_user"
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all shadow-sm"
-              >
-                {saving ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                {isAr ? 'حفظ الحساب' : 'Save Account'}
-              </button>
+          {/* TAB 4: System Reset Console (إعادة تهيئة النظام) */}
+          {activeTab === 'reset' && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-900">
+                <RefreshCcw className="h-5 w-5 text-blue-600" />
+                <h3 className="text-sm font-black text-slate-900 dark:text-white">{isAr ? 'إعادة تهيئة النظام' : 'System Reset & Data Wipe'}</h3>
+              </div>
+
+              {/* Warning Alert Banner (Matches Image 1 layout) */}
+              <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-300 dark:border-amber-900/30 text-amber-800 dark:text-amber-400 space-y-3 shadow-xs">
+                <div className="flex items-center gap-2 font-black text-xs">
+                  <AlertCircle className="h-4.5 w-4.5 text-amber-600 animate-pulse" />
+                  <span>{isAr ? 'تحذير: إعادة تهيئة النظام (System Reset)' : 'Warning: ERP System Reset'}</span>
+                </div>
+                <p className="text-[11px] font-semibold leading-relaxed">
+                  {isAr 
+                    ? 'هذه العملية تحذف جميع البيانات التشغيلية فقط، مثل القيود اليومية، سندات القبض والصرف، الحركات المالية، فواتير المبيعات والمشتريات، المرتجعات، أوامر التشغيل، والرواتب، مع إعادة ترقيم المستندات إلى البداية. لن يتم حذف البيانات الأساسية مثل المستخدمين، الحسابات، الأصناف، المخازن، والخزائن.'
+                    : 'This operation wipes all transaction ledgers, journals, sales, purchases, payroll runs, and vouchers, resetting counters to start. Chart of Accounts, users list, inventory list, and vaults config are retained.'}
+                </p>
+              </div>
+
+              {/* Inputs */}
+              <div className="space-y-4 text-xs font-bold text-slate-700 dark:text-slate-350 max-w-md">
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'اكتب RESET أو إعادة تعيين للتأكيد' : 'Type RESET to validate'}</label>
+                  <input 
+                    type="text" 
+                    value={resetConfirm}
+                    onChange={e => setResetConfirm(e.target.value)}
+                    placeholder="RESET"
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-800 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-955 dark:text-white font-mono"
+                  />
+                </div>
+                
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">{isAr ? 'كلمة المرور الحالية للتأكيد' : 'Current password verification'}</label>
+                  <input 
+                    type="password" 
+                    value={resetPassword}
+                    onChange={e => setResetPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full px-3 py-2 border border-slate-200 dark:border-slate-800 rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-950 dark:text-white font-mono"
+                  />
+                </div>
+
+                <div className="pt-3">
+                  <button
+                    onClick={handleSystemReset}
+                    disabled={isResetting}
+                    className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50 justify-center"
+                  >
+                    <Database className="h-4 w-4" />
+                    <span>{isResetting ? (isAr ? 'جاري إعادة التهيئة...' : 'Resetting...') : (isAr ? 'بدء إعادة التهيئة' : 'Execute Reset Now')}</span>
+                  </button>
+                </div>
+              </div>
+
             </div>
+          )}
+
+        </div>
+
+        {/* RIGHT PANEL: Vertical tabs sidebar (width: 64) */}
+        <div className="w-full lg:w-64 shrink-0 bg-white dark:bg-slate-955 border border-slate-150/60 dark:border-slate-850 rounded-2xl p-4 shadow-xs self-start">
+          <div className="flex flex-col gap-2">
+            
+            <button
+              onClick={() => { setActiveTab('company'); setShowUserForm(false); }}
+              className={`w-full px-4 py-3 text-xs font-black rounded-xl text-start transition-all cursor-pointer ${
+                activeTab === 'company' 
+                  ? 'bg-blue-600 text-white shadow-md' 
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900'
+              }`}
+            >
+              {isAr ? 'بيانات الشركة' : 'Company Profile'}
+            </button>
+
+            <button
+              onClick={() => { setActiveTab('general'); setShowUserForm(false); }}
+              className={`w-full px-4 py-3 text-xs font-black rounded-xl text-start transition-all cursor-pointer ${
+                activeTab === 'general' 
+                  ? 'bg-blue-600 text-white shadow-md' 
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900'
+              }`}
+            >
+              {isAr ? 'الإعدادات العامة' : 'General Configuration'}
+            </button>
+
+            <button
+              onClick={() => { setActiveTab('users'); setShowUserForm(false); }}
+              className={`w-full px-4 py-3 text-xs font-black rounded-xl text-start transition-all cursor-pointer ${
+                activeTab === 'users' 
+                  ? 'bg-blue-600 text-white shadow-md' 
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900'
+              }`}
+            >
+              {isAr ? 'إدارة المستخدمين' : 'Users Management'}
+            </button>
+
+            <button
+              onClick={() => { setActiveTab('reset'); setShowUserForm(false); }}
+              className={`w-full px-4 py-3 text-xs font-black rounded-xl text-start transition-all cursor-pointer ${
+                activeTab === 'reset' 
+                  ? 'bg-blue-600 text-white shadow-md' 
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900'
+              }`}
+            >
+              {isAr ? 'إعادة تهيئة النظام' : 'System Reset Console'}
+            </button>
+
           </div>
         </div>
-      )}
+
+      </div>
+
     </div>
   );
 }

@@ -55,7 +55,6 @@ export function updateAccountBalance(db: Database.Database, id: string, delta: n
 export function deleteAccount(db: Database.Database, id: string) {
   const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(id) as any;
   if (!account) throw new Error('Account not found');
-  if (account.isSystem) throw new Error('Cannot delete system account');
 
   const linked = db.prepare('SELECT COUNT(*) as cnt FROM journal_lines WHERE accountId = ?').get(id) as any;
   if (linked.cnt > 0) throw new Error('Cannot delete account with journal entries');

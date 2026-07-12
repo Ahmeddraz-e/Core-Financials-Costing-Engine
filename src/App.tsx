@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   fetchERPData, 
   saveERPData, 
@@ -10,17 +10,76 @@ import {
   getAuthToken,
   clearAuthToken,
   fetchBadges,
-  fetchNotifications
+  fetchNotifications,
+  getLicenseStatus,
+  activateLicenseKey
 } from './services/api';
-import { ERPData, UserSession, AuditLog } from './types';
+import { ERPData, UserSession, AuditLog, Treasury, BankAccount } from './types';
 import { initialERPData } from './initialData';
 import CustomDialog from './components/CustomDialog';
+import ActivationGate from './components/ActivationGate';
+import { 
+  Search, Bell, MessageSquare, CheckSquare, Globe, Sun, Moon, LogOut, 
+  ChevronDown, User, Menu, X, Landmark, Coins, ShoppingBag, Boxes, 
+  BookOpen, FileText, Settings, LayoutDashboard, Users, Activity, 
+  ShieldAlert, Scale, Lock, UserCog, UserCheck, Briefcase, FileWarning
+} from 'lucide-react';
 
 declare global {
   interface Window {
     showAlert: (messageAr: string, messageEn: string, type?: 'info' | 'success' | 'warning' | 'danger') => void;
     showConfirm: (messageAr: string, messageEn: string, onConfirm: () => void) => void;
+    electronAPI?: {
+      selectFolder: () => Promise<string | null>;
+      selectBackupFile: () => Promise<string | null>;
+    };
   }
+}
+
+// Helper: fill missing accountId on treasuries & bankAccounts from initial data,
+// and restore default entities that were accidentally deleted (only if linked account exists)
+function fixAccountLinks(data: ERPData, initial: ERPData): ERPData {
+  const accountIds = new Set((data.accounts || []).map(a => a.id));
+
+  const treasuries: Treasury[] = (data.treasuries || []).map(t => ({
+    ...t,
+    accountId: t.accountId || (initial.treasuries.find(it => it.id === t.id)?.accountId || '')
+  }));
+  // Restore missing default treasuries only if linked account still exists
+  for (const it of (initial.treasuries || [])) {
+    const accId = it.accountId || '';
+    if (!treasuries.find(t => t.id === it.id) && (!accId || accountIds.has(accId))) {
+      treasuries.push({ ...it, accountId: accId });
+    }
+  }
+
+  const bankAccounts: BankAccount[] = (data.bankAccounts || []).map(b => ({
+    ...b,
+    accountId: b.accountId || (initial.bankAccounts.find(ib => ib.id === b.id)?.accountId || '')
+  }));
+  // Restore missing default bank accounts only if linked account still exists
+  for (const ib of (initial.bankAccounts || [])) {
+    const accId = ib.accountId || '';
+    if (!bankAccounts.find(b => b.id === ib.id) && (!accId || accountIds.has(accId))) {
+      bankAccounts.push({ ...ib, accountId: accId });
+    }
+  }
+
+  const checkbooks = (data.checkbooks || []).slice();
+  for (const ic of (initial.checkbooks || [])) {
+    if (!checkbooks.find(c => c.id === ic.id)) {
+      checkbooks.push({ ...ic });
+    }
+  }
+
+  const accounts = (data.accounts || []).slice();
+  for (const ia of (initial.accounts || [])) {
+    if (!accounts.find(a => a.id === ia.id)) {
+      accounts.push({ ...ia });
+    }
+  }
+
+  return { ...data, treasuries, bankAccounts, checkbooks, accounts };
 }
 
 // Importing modules
@@ -60,8 +119,28 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [badges, setBadges] = useState({ pendingPRs: 0, lowStockItems: 0, bouncedCheques: 0 });
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [licenseStatus, setLicenseStatus] = useState<'checking' | 'activated' | 'needs-activation'>('checking');
+  const [licenseError, setLicenseError] = useState<string | null>(null);
+  const [showLogin, setShowLogin] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showNotifMenu, setShowNotifMenu] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [activeMegaMenu, setActiveMegaMenu] = useState<string | null>(null);
 
   const isAr = lang === 'ar';
+
+  const branchList = useMemo(() => {
+    try {
+      const saved = localStorage.getItem('erp_company_profile');
+      if (saved) {
+        const p = JSON.parse(saved);
+        if (p && p.branches) {
+          return p.branches.split(',').map((b: string) => b.trim()).filter(Boolean);
+        }
+      }
+    } catch (e) {}
+    return ['الفرع الرئيسي', 'فرع الدقي', 'فرع مدينة نصر']; // Fallback
+  }, []);
 
   const [dialogConfig, setDialogConfig] = useState<{
     isOpen: boolean;
@@ -78,6 +157,25 @@ export default function App() {
     onConfirm: () => {},
     onCancel: () => {}
   });
+
+  // Check license activation status on startup (before anything else)
+  useEffect(() => {
+    async function checkLicense() {
+      try {
+        const status = await getLicenseStatus();
+        if (status.isActivated) {
+          setLicenseStatus('activated');
+        } else {
+          setLicenseStatus('needs-activation');
+          setLoading(false);
+        }
+      } catch {
+        setLicenseStatus('needs-activation');
+        setLoading(false);
+      }
+    }
+    checkLicense();
+  }, []);
 
   // Bind custom dialog functions to the global window object
   useEffect(() => {
@@ -114,8 +212,9 @@ export default function App() {
     };
   }, [lang]);
 
-  // 1. Check for existing session on startup
+  // 1. Check for existing session on startup (only if license is activated)
   useEffect(() => {
+    if (licenseStatus !== 'activated') return;
     async function checkSession() {
       const token = getAuthToken();
       if (!token) {
@@ -144,8 +243,11 @@ export default function App() {
         });
         // Now load ERP data and merge with initial shape to prevent undefined errors
         const data = await fetchERPData();
-        const mergedData = { ...initialERPData, ...data };
+        const mergedData = fixAccountLinks({ ...initialERPData, ...data }, initialERPData);
         setErpData(mergedData);
+        if (mergedData.companyProfile) {
+          localStorage.setItem('erp_company_profile', JSON.stringify(mergedData.companyProfile));
+        }
         // Load badges and notifications
         try {
           const [b, n] = await Promise.all([fetchBadges(), fetchNotifications()]);
@@ -160,7 +262,7 @@ export default function App() {
       }
     }
     checkSession();
-  }, []);
+  }, [licenseStatus]);
 
   // 2. Dynamic Dark/Light Tailwind config
   useEffect(() => {
@@ -174,19 +276,72 @@ export default function App() {
 
   // Sequential write queue to serialize database saves in the background
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const pendingSaveCountRef = useRef(0);
 
-  const updateErpState = (updater: (prev: ERPData) => ERPData) => {
+  const updateErpState = (updater: (prev: ERPData) => ERPData): Promise<void> => {
+    pendingSaveCountRef.current++;
+    let nextSnapshot: ERPData | null = null;
     setErpData(prev => {
       if (!prev) return null;
-      const next = updater(prev);
-      saveQueueRef.current = saveQueueRef.current
-        .then(() => saveERPData(next))
-        .catch(err => {
-          console.error('Database sync failed:', err);
-        });
-      return next;
+      nextSnapshot = updater(prev);
+      if (nextSnapshot.companyProfile) {
+        localStorage.setItem('erp_company_profile', JSON.stringify(nextSnapshot.companyProfile));
+      }
+      return nextSnapshot;
     });
+    // The actual save operation — might reject
+    const saveOp = saveQueueRef.current.then(() => {
+      if (nextSnapshot) return saveERPData(nextSnapshot);
+    });
+    // Queue always stays resolved so subsequent saves can proceed
+    saveQueueRef.current = saveOp
+      .catch(err => {
+        console.error('Database sync failed:', err);
+        setSaveError(err.message || 'Unknown save error');
+      })
+      .finally(() => { pendingSaveCountRef.current--; });
+    // Callers get a promise that rejects on failure
+    return saveOp;
   };
+
+  // Show user-facing alert when save fails
+  useEffect(() => {
+    if (saveError) {
+      window.showAlert(
+        `⚠️ فشل حفظ البيانات: ${saveError}`,
+        `⚠️ Failed to save data: ${saveError}`,
+        'danger'
+      );
+      setSaveError(null);
+    }
+  }, [saveError]);
+
+  // Warn on unsaved changes before close/reload
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (pendingSaveCountRef.current > 0) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, []);
+
+  // Listen for auth expiration events (dispatched by api.ts on 401)
+  useEffect(() => {
+    const handler = () => {
+      saveQueueRef.current = Promise.resolve();
+      pendingSaveCountRef.current = 0;
+      localStorage.removeItem('erp_company');
+      localStorage.removeItem('erp_branch');
+      localStorage.removeItem('erp_period');
+      setUser(null);
+      setErpData(null);
+    };
+    window.addEventListener('auth:expired', handler);
+    return () => window.removeEventListener('auth:expired', handler);
+  }, []);
 
   // Refresh badges after data changes
   const refreshBadges = async () => {
@@ -348,7 +503,9 @@ export default function App() {
       '⚠️ Are you sure you want to reset the system database to factory default data?',
       async () => {
         try {
-          const res = await resetDatabaseToDefault();
+          const pass = prompt(isAr ? 'أدخل كلمة مرور المسؤول للتأكيد:' : 'Enter admin password to confirm:') || '';
+          if (!pass) return;
+          const res = await resetDatabaseToDefault(pass);
           window.showAlert(res.messageAr, res.messageEn, 'success');
           const updated = await fetchERPData();
           setErpData(updated);
@@ -382,11 +539,16 @@ export default function App() {
     setLoading(true);
     try {
       const data = await fetchERPData();
-      const mergedData = { ...initialERPData, ...data };
+      const mergedData = fixAccountLinks({ ...initialERPData, ...data }, initialERPData);
       setErpData(mergedData);
-      const [b, n] = await Promise.all([fetchBadges(), fetchNotifications()]);
-      setBadges(b);
-      setNotifications(n);
+      if (mergedData.companyProfile) {
+        localStorage.setItem('erp_company_profile', JSON.stringify(mergedData.companyProfile));
+      }
+      try {
+        const [b, n] = await Promise.all([fetchBadges(), fetchNotifications()]);
+        setBadges(b);
+        setNotifications(n);
+      } catch { /* non-critical */ }
     } catch (err: any) {
       setError(err.message || 'Error loading data');
     }
@@ -395,18 +557,33 @@ export default function App() {
 
   // Handle logout
   const handleLogout = async () => {
-    handleAddAuditLog(
-      `تسجيل خروج مستخدم: ${user?.username || ''}`,
-      `User logged out: ${user?.username || ''}`,
-      `تم إنهاء جلسة العمل الآمنة للمستخدم.`
-    );
+    // 1. Wait for all pending saves to finish with current valid token
+    try { await saveQueueRef.current; } catch {}
+    // 2. Drop the save queue so no stale saves execute after token is cleared
+    saveQueueRef.current = Promise.resolve();
+    pendingSaveCountRef.current = 0;
+    // 3. Now safe to clear session
     await logout();
-    // Clear persisted session info
+    // 4. Clear persisted session info
     localStorage.removeItem('erp_company');
     localStorage.removeItem('erp_branch');
     localStorage.removeItem('erp_period');
     setUser(null);
     setErpData(null);
+  };
+
+  const handleRetry = () => {
+    setError(null);
+    setLoading(true);
+    fetchERPData()
+      .then(data => {
+        setErpData(fixAccountLinks({ ...initialERPData, ...data }, initialERPData));
+        setLoading(false);
+      })
+      .catch(err => {
+        setError(err.message);
+        setLoading(false);
+      });
   };
 
   // Render loading screen
@@ -432,11 +609,14 @@ export default function App() {
           <h2 className="text-sm font-black text-rose-600">{isAr ? 'فشل الاتصال بخادم النظام المحلي' : 'Local ERP Server Offline'}</h2>
           <p className="text-xs text-slate-500 leading-relaxed">
             {isAr 
-              ? 'لم يتمكن التطبيق من قراءة ملفات قواعد البيانات. يرجى التأكد من تشغيل خادم Express على منفذ 3000.' 
-              : 'Failed to establish local loopback connection. Ensure Express background server is fully operational.'}
+              ? 'تعذر تحميل بيانات النظام. يرجى المحاولة مرة أخرى.' 
+              : 'Failed to load system data. Please try again.'}
+          </p>
+          <p className="text-[10px] text-rose-400 bg-rose-50 dark:bg-rose-950/50 px-3 py-2 rounded-lg font-mono break-all">
+            {error}
           </p>
           <button 
-            onClick={() => window.location.reload()}
+            onClick={handleRetry}
             className="w-full bg-rose-600 text-white font-bold py-2 rounded-xl text-xs"
           >
             {isAr ? 'إعادة محاولة الاتصال' : 'Retry Loopback'}
@@ -444,6 +624,33 @@ export default function App() {
         </div>
       </div>
     );
+  }
+
+  // LICENSE ACTIVATION SCREEN (stays until user manually proceeds to login)
+  if (licenseStatus !== 'activated' || !showLogin) {
+    return <ActivationGate
+      status={licenseStatus}
+      error={licenseError}
+      lang={lang}
+      isAr={isAr}
+      setLang={setLang}
+      theme={theme}
+      setTheme={setTheme}
+      onActivate={async (key) => {
+        setLicenseError(null);
+        try {
+          const result = await activateLicenseKey(key);
+          if (result.success) {
+            setLicenseStatus('activated');
+          } else {
+            setLicenseError(result.reason || (isAr ? 'رمز التفعيل غير صحيح' : 'Invalid license key'));
+          }
+        } catch {
+          setLicenseError(isAr ? 'فشل الاتصال بخادم التفعيل' : 'Activation server error');
+        }
+      }}
+      onProceedToLogin={() => setShowLogin(true)}
+    />;
   }
 
   // FORCE LOGIN IF SESSION IS EMPTY
@@ -470,6 +677,9 @@ export default function App() {
             data={erpData} 
             lang={lang} 
             onUpdateAccounts={handleUpdateAccounts}
+            onUpdateTreasuries={handleUpdateTreasuries}
+            onUpdateBankAccounts={handleUpdateBankAccounts}
+            onUpdateCheckbooks={handleUpdateCheckbooks}
             onAddAuditLog={handleAddAuditLog}
           />
         );
@@ -481,6 +691,8 @@ export default function App() {
             lang={lang} 
             onUpdateEntries={handleUpdateEntries}
             onUpdateAccounts={handleUpdateAccounts}
+            onUpdateTreasuries={handleUpdateTreasuries}
+            onUpdateBankAccounts={handleUpdateBankAccounts}
             onAddAuditLog={handleAddAuditLog}
           />
         );
@@ -514,6 +726,8 @@ export default function App() {
             onUpdateSuppliers={handleUpdateSuppliers}
             onUpdateTreasuries={handleUpdateTreasuries}
             onUpdateInventory={handleUpdateInventory}
+            onUpdateSalesInvoices={handleUpdateSalesInvoices}
+            onUpdatePurchases={handleUpdatePurchases}
             onAddAuditLog={handleAddAuditLog}
           />
         );
@@ -540,9 +754,11 @@ export default function App() {
             onUpdateSales={handleUpdateSales}
             onUpdateInventory={handleUpdateInventory}
             onUpdateTreasuries={handleUpdateTreasuries}
+            onUpdateBankAccounts={handleUpdateBankAccounts}
             onUpdateAccounts={handleUpdateAccounts}
             onUpdateEntries={handleUpdateEntries}
             onAddAuditLog={handleAddAuditLog}
+            onUpdateERPState={updateErpState}
           />
         );
       case 'purchases':
@@ -554,8 +770,12 @@ export default function App() {
             onUpdateInventory={handleUpdateInventory}
             onUpdateSuppliers={handleUpdateSuppliers}
             onUpdateAccounts={handleUpdateAccounts}
-            onAddMoneyTransaction={(tx) => handleUpdateMoneyTransactions([tx, ...erpData.moneyTransactions])}
+            onAddMoneyTransaction={(tx) => updateErpState(prev => ({
+              ...prev,
+              moneyTransactions: [tx, ...(prev.moneyTransactions || [])]
+            }))}
             onAddAuditLog={handleAddAuditLog}
+            onUpdateERPState={updateErpState}
           />
         );
       case 'inventory':
@@ -577,6 +797,8 @@ export default function App() {
             lang={lang} 
             onUpdateRecipes={handleUpdateRecipes}
             onAddAuditLog={handleAddAuditLog}
+            onUpdateInventory={handleUpdateInventory}
+            onUpdateERPState={updateErpState}
           />
         );
       case 'treasury':
@@ -606,6 +828,7 @@ export default function App() {
             onUpdateAccounts={handleUpdateAccounts}
             onUpdateEntries={handleUpdateEntries}
             onAddAuditLog={handleAddAuditLog}
+            onUpdateERPState={updateErpState}
           />
         );
       case 'budgets':
@@ -615,10 +838,12 @@ export default function App() {
           <HRModule 
             data={erpData} 
             lang={lang} 
+            userRole={user?.role || 'admin'}
             onUpdateEmployees={handleUpdateEmployees}
             onUpdateAccounts={handleUpdateAccounts}
             onUpdateEntries={handleUpdateEntries}
             onAddAuditLog={handleAddAuditLog}
+            onUpdateERPState={updateErpState}
           />
         );
       case 'payroll_runs':
@@ -658,8 +883,11 @@ export default function App() {
       case 'user_management':
         return (
           <UserManagement
+            data={erpData}
             lang={lang}
             currentUsername={user.username}
+            onUpdateErpData={(next) => updateErpState(() => next)}
+            onAddAuditLog={handleAddAuditLog}
           />
         );
       default:
@@ -669,7 +897,7 @@ export default function App() {
 
   return (
     <div 
-      className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col lg:flex-row antialiased select-none font-sans" 
+      className="h-screen bg-slate-50 dark:bg-slate-950 flex flex-col lg:flex-row antialiased select-none font-sans overflow-hidden" 
       dir={isAr ? 'rtl' : 'ltr'}
     >
       
@@ -686,22 +914,18 @@ export default function App() {
       />
 
       {/* 2. MAIN CLIENT CONTAINER VIEWPORT (Fills right side on LTR, left on RTL) */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
         
         {/* TOP STATUS HEADER BAR */}
         <Header 
           lang={lang} 
-          activeBranch={user?.branch || 'main'}
-          setActiveBranch={(branch) => setUser(user ? { ...user, branch } : null)}
-          activePeriod={user?.period || '2026-06'}
-          setActivePeriod={(period) => setUser(user ? { ...user, period } : null)}
           notifications={notifications}
           darkMode={theme === 'dark'}
           setDarkMode={(val) => setTheme(val ? 'dark' : 'light')}
         />
 
         {/* COMPONENT INTERACTION AREA */}
-        <main className="flex-1 p-6 lg:p-8 space-y-6 overflow-hidden">
+        <main className="flex-1 p-6 lg:p-8 space-y-6 overflow-y-auto">
           {renderTabContent()}
         </main>
 
@@ -719,3 +943,4 @@ export default function App() {
     </div>
   );
 }
+

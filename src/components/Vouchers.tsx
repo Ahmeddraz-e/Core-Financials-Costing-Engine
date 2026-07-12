@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Receipt, Plus, Search, Printer, Download, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
+import { Receipt, Plus, Search, FileSpreadsheet, Download, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
 import { ERPData, Voucher, VoucherType } from '../types';
 import { printDocument, fmtCurrency, fmtDate, numberToArabicWords, companyHeaderHTML, signaturesHTML, footerHTML, exportToCSV } from '../utils/printUtils';
 
@@ -141,45 +141,18 @@ export default function VouchersModule({
     );
   };
 
-  const handlePrint = (v: Voucher) => {
-    const isReceipt = v.type === VoucherType.Receipt;
-    const title = isReceipt ? (isAr ? 'سند قبض' : 'Receipt Voucher') : (isAr ? 'سند صرف' : 'Payment Voucher');
-
-    const html = `
-      <div class="print-page">
-        ${companyHeaderHTML()}
-        <div class="doc-title" style="background:${isReceipt ? '#f0fdf4' : '#fef2f2'}; border-color:${isReceipt ? '#86efac' : '#fca5a5'}">
-          <h2 style="color:${isReceipt ? '#15803d' : '#dc2626'}">${title}</h2>
-          <div class="doc-number">${v.voucherNumber}</div>
-        </div>
-
-        <div class="info-grid">
-          <div class="info-box"><div class="label">${isAr ? 'التاريخ' : 'Date'}</div><div class="value">${fmtDate(v.date, lang)}</div></div>
-          <div class="info-box"><div class="label">${isAr ? (isReceipt ? 'استلمنا من' : 'صُرف إلى') : (isReceipt ? 'Received From' : 'Paid To')}</div><div class="value">${v.partyName}</div></div>
-          <div class="info-box"><div class="label">${isAr ? 'طريقة الدفع' : 'Payment Method'}</div><div class="value">${v.paymentMethod === 'CASH' ? (isAr ? 'نقدي' : 'Cash') : v.paymentMethod === 'BANK_TRANSFER' ? (isAr ? 'تحويل بنكي' : 'Bank Transfer') : (isAr ? 'شيك' : 'Cheque')}</div></div>
-          <div class="info-box"><div class="label">${isAr ? 'المرجع' : 'Reference'}</div><div class="value">${v.referenceNumber || '-'}</div></div>
-        </div>
-
-        <div class="voucher-amount" style="border-color:${isReceipt ? '#22c55e' : '#ef4444'}; color:${isReceipt ? '#15803d' : '#dc2626'}; background:${isReceipt ? '#f0fdf4' : '#fef2f2'}">
-          ${fmtCurrency(v.amount, lang)}
-        </div>
-
-        <div class="amount-words">
-          ${isAr ? 'المبلغ كتابةً:' : 'Amount in words:'} ${numberToArabicWords(v.amount)}
-        </div>
-
-        ${v.description ? `<div style="margin-bottom:15px;"><strong style="font-size:10px; color:#64748b;">${isAr ? 'وذلك عن:' : 'Description:'}</strong><p style="font-size:12px; font-weight:700; color:#0f172a;">${v.description}</p></div>` : ''}
-
-        ${signaturesHTML([
-          isAr ? 'أمين الصندوق' : 'Cashier',
-          isAr ? 'المحاسب' : 'Accountant',
-          isAr ? (isReceipt ? 'المُسلِّم' : 'المستلم') : (isReceipt ? 'Payer' : 'Payee')
-        ])}
-
-        ${footerHTML()}
-      </div>
-    `;
-    printDocument(html, `${title} - ${v.voucherNumber}`);
+  const handleExportSingleVoucher = (v: Voucher) => {
+    const formatted = [{
+      [isAr ? 'رقم السند' : 'Voucher Number']: v.voucherNumber,
+      [isAr ? 'التاريخ' : 'Date']: v.date,
+      [isAr ? 'النوع' : 'Type']: v.type === VoucherType.Receipt ? (isAr ? 'قبض' : 'Receipt') : (isAr ? 'صرف' : 'Payment'),
+      [isAr ? 'الجهة' : 'Party']: getPartyDisplayName(v),
+      [isAr ? 'المبلغ' : 'Amount']: v.amount,
+      [isAr ? 'طريقة الدفع' : 'Payment Method']: v.paymentMethod,
+      [isAr ? 'البيان' : 'Description']: v.description,
+      [isAr ? 'المرجع' : 'Reference']: v.referenceNumber || ''
+    }];
+    exportToCSV(formatted, `voucher_${v.voucherNumber}`);
   };
 
   const handleExport = () => {
@@ -229,14 +202,14 @@ export default function VouchersModule({
           <ArrowDownCircle className="h-8 w-8 text-emerald-500" />
           <div>
             <p className="text-[10px] font-bold text-emerald-600 uppercase">{isAr ? 'إجمالي المقبوضات' : 'Total Receipts'}</p>
-            <p className="text-lg font-black text-emerald-700 dark:text-emerald-400">{formatCurrency(totalReceipts)}</p>
+            <p className="text-lg font-black text-slate-900 dark:text-white">{formatCurrency(totalReceipts)}</p>
           </div>
         </div>
         <div className="bg-white dark:bg-slate-900 border border-red-200 dark:border-red-800/40 rounded-xl p-4 flex items-center gap-3">
           <ArrowUpCircle className="h-8 w-8 text-red-500" />
           <div>
             <p className="text-[10px] font-bold text-red-600 uppercase">{isAr ? 'إجمالي المصروفات' : 'Total Payments'}</p>
-            <p className="text-lg font-black text-red-700 dark:text-red-400">{formatCurrency(totalPayments)}</p>
+            <p className="text-lg font-black text-slate-900 dark:text-white">{formatCurrency(totalPayments)}</p>
           </div>
         </div>
       </div>
@@ -244,11 +217,11 @@ export default function VouchersModule({
       {/* Tabs */}
       <div className="flex rounded-lg bg-slate-100 dark:bg-slate-800 p-1 w-fit">
         <button onClick={() => setActiveTab('RECEIPT')}
-          className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${activeTab === 'RECEIPT' ? 'bg-white dark:bg-slate-700 text-emerald-700 dark:text-emerald-400 shadow-xs' : 'text-slate-500'}`}>
+          className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${activeTab === 'RECEIPT' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs' : 'text-slate-500'}`}>
           {isAr ? 'سندات القبض' : 'Receipt Vouchers'}
         </button>
         <button onClick={() => setActiveTab('PAYMENT')}
-          className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${activeTab === 'PAYMENT' ? 'bg-white dark:bg-slate-700 text-red-700 dark:text-red-400 shadow-xs' : 'text-slate-500'}`}>
+          className={`px-4 py-2 text-xs font-bold rounded-lg transition-all ${activeTab === 'PAYMENT' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs' : 'text-slate-500'}`}>
           {isAr ? 'سندات الصرف' : 'Payment Vouchers'}
         </button>
       </div>
@@ -344,7 +317,7 @@ export default function VouchersModule({
                   <th className="text-right px-4 py-3 font-bold text-slate-500">{isAr ? 'الجهة' : 'Party'}</th>
                   <th className="text-left px-4 py-3 font-bold text-slate-500">{isAr ? 'المبلغ' : 'Amount'}</th>
                   <th className="text-right px-4 py-3 font-bold text-slate-500">{isAr ? 'البيان' : 'Description'}</th>
-                  <th className="text-center px-4 py-3 font-bold text-slate-500">{isAr ? 'طباعة' : 'Print'}</th>
+                  <th className="text-center px-4 py-3 font-bold text-slate-500">{isAr ? 'تصدير' : 'Export'}</th>
                 </tr>
               </thead>
               <tbody>
@@ -356,8 +329,8 @@ export default function VouchersModule({
                     <td className="px-4 py-3 font-black text-slate-900 dark:text-white">{formatCurrency(v.amount)}</td>
                     <td className="px-4 py-3 font-bold text-slate-500 dark:text-slate-400 max-w-[200px] truncate">{v.description}</td>
                     <td className="px-4 py-3 text-center">
-                      <button onClick={() => handlePrint(v)} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500">
-                        <Printer className="h-3.5 w-3.5" />
+                      <button onClick={() => handleExportSingleVoucher(v)} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-emerald-600 cursor-pointer" title={isAr ? 'تصدير Excel' : 'Export Excel'}>
+                        <FileSpreadsheet className="h-4 w-4" />
                       </button>
                     </td>
                   </tr>

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Target, TrendingUp, TrendingDown, Percent, Settings, Save, AlertTriangle, Sparkles } from 'lucide-react';
+import { Target, TrendingUp, TrendingDown, Percent, Settings, Save, AlertTriangle, Sparkles, CheckCircle2 } from 'lucide-react';
 import { ERPData, AccountType } from '../types';
 
 interface BudgetsProps {
@@ -7,18 +7,30 @@ interface BudgetsProps {
   lang: 'ar' | 'en';
 }
 
+function loadBudget(key: string, defaultVal: number): number {
+  try {
+    const stored = localStorage.getItem(`budget_${key}`);
+    return stored !== null ? Number(stored) : defaultVal;
+  } catch { return defaultVal; }
+}
+
+function saveBudget(key: string, val: number) {
+  try { localStorage.setItem(`budget_${key}`, String(val)); } catch {}
+}
+
 export default function Budgets({ data, lang }: BudgetsProps) {
   const isAr = lang === 'ar';
   
-  // Local target budget parameters editable by user
-  const [targetSales, setTargetSales] = useState(150000);
-  const [targetCOGS, setTargetCOGS] = useState(50000);
-  const [targetSalaries, setTargetSalaries] = useState(30000);
-  const [targetUtilities, setTargetUtilities] = useState(10000);
+  const [targetSales, setTargetSales] = useState(() => loadBudget('sales', 150000));
+  const [targetCOGS, setTargetCOGS] = useState(() => loadBudget('cogs', 50000));
+  const [targetSalaries, setTargetSalaries] = useState(() => loadBudget('salaries', 30000));
+  const [targetUtilities, setTargetUtilities] = useState(() => loadBudget('utilities', 10000));
   const [showEditTargets, setShowEditTargets] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat(isAr ? 'ar-EG' : 'en-US', { style: 'currency', currency: 'EGP', maximumFractionDigits: 0 }).format(val);
+    const formattedNum = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(val);
+    return isAr ? `${formattedNum} ج.م` : `${formattedNum} EGP`;
   };
 
   // Get Actual values from Chart of Accounts
@@ -30,11 +42,9 @@ export default function Budgets({ data, lang }: BudgetsProps) {
     .filter(a => a.type === AccountType.CostOfSales)
     .reduce((sum, a) => sum + a.balance, 0);
 
-  const actualSalaries = data.accounts
-    .filter(a => a.type === AccountType.Expense) // gross salaries is 501
-    .reduce((sum, a) => sum + a.balance, 0);
+  const actualSalaries = data.accounts.find(a => a.id === '601')?.balance || 0;
 
-  const actualUtilities = data.accounts.find(a => a.id === '503')?.balance || 0;
+  const actualUtilities = data.accounts.find(a => a.id === '603')?.balance || 0;
 
   // COMPUTE VARIANCE ANALYSIS
   // Formula: Variance = Actual - Budget for Revenue (positive is favorable)
@@ -102,7 +112,32 @@ export default function Budgets({ data, lang }: BudgetsProps) {
       {/* EDIT TARGETS PANEL */}
       {showEditTargets && (
         <div id="budget_targets_panel" className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-xl space-y-4">
-          <h3 className="text-xs font-extrabold text-slate-700 block uppercase tracking-widest">{isAr ? 'تحديث مستهدفات الربع المالي الجاري' : 'Modify Active Fiscal Quarter Target Allocations'}</h3>
+          <div className="flex justify-between items-center">
+            <h3 className="text-xs font-extrabold text-slate-700 block uppercase tracking-widest">{isAr ? 'تحديث مستهدفات الربع المالي الجاري' : 'Modify Active Fiscal Quarter Target Allocations'}</h3>
+            <div className="flex items-center gap-2">
+              {saved && (
+                <span className="text-[10px] text-slate-900 dark:text-white font-bold flex items-center gap-1">
+                  <CheckCircle2 className="h-3 w-3" />
+                  {isAr ? 'تم الحفظ' : 'Saved'}
+                </span>
+              )}
+              <button
+                id="save_budget_targets"
+                onClick={() => {
+                  saveBudget('sales', targetSales);
+                  saveBudget('cogs', targetCOGS);
+                  saveBudget('salaries', targetSalaries);
+                  saveBudget('utilities', targetUtilities);
+                  setSaved(true);
+                  setTimeout(() => setSaved(false), 2500);
+                }}
+                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition-all cursor-pointer"
+              >
+                <Save className="h-3.5 w-3.5" />
+                <span>{isAr ? 'حفظ المستهدفات' : 'Save Targets'}</span>
+              </button>
+            </div>
+          </div>
           
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
             <div className="space-y-1.5">
@@ -181,7 +216,7 @@ export default function Budgets({ data, lang }: BudgetsProps) {
 
                 <div className="text-end">
                   <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold ${
-                    isFavorable ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'
+                    isFavorable ? 'bg-emerald-500/10 text-slate-900 dark:text-white' : 'bg-rose-500/10 text-slate-900 dark:text-white'
                   }`}>
                     {isFavorable ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
                     <span>
@@ -204,13 +239,13 @@ export default function Budgets({ data, lang }: BudgetsProps) {
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-400 block font-bold">{isAr ? 'فرق الانحراف ج.' : 'Variance (EGP)'}</span>
-                  <span className={`mt-1 block font-mono font-black ${isFavorable ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  <span className="mt-1 block font-mono font-black text-slate-900 dark:text-white">
                     {isFavorable ? '+' : ''}{formatCurrency(rawVariance)}
                   </span>
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-400 block font-bold">{isAr ? 'نسبة الإنجاز المالي' : 'Target % Reached'}</span>
-                  <span className="text-blue-600 mt-1 block font-mono font-black">{pctOfTarget.toFixed(1)}%</span>
+                  <span className="text-slate-900 dark:text-white mt-1 block font-mono font-black">{pctOfTarget.toFixed(1)}%</span>
                 </div>
               </div>
 

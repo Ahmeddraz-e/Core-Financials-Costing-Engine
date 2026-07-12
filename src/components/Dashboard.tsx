@@ -8,7 +8,7 @@ import {
   LineChart, Line, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   BarChart, Bar, PieChart, Pie, Cell, Legend, CartesianGrid, AreaChart
 } from 'recharts';
-import { ERPData, AccountType } from '../types';
+import { ERPData, AccountType, ItemCategory } from '../types';
 
 interface DashboardProps {
   data: ERPData;
@@ -33,7 +33,8 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
   const takeawaySales = getAccountBalance('4102001');
   const deliverySales = getAccountBalance('4103001');
   const appSales = getAccountBalance('4104002') || getAccountBalance('4104001');
-  const totalSales = dineInSales + takeawaySales + deliverySales + appSales;
+  const generalInvoiceSales = getAccountBalance('4105001');
+  const totalSales = dineInSales + takeawaySales + deliverySales + appSales + generalInvoiceSales;
 
   const foodCost = getAccountBalance('5101001');
   const beverageCost = getAccountBalance('5102001');
@@ -61,7 +62,7 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
   const laborCostPercent = totalSales > 0 ? (laborExpense / totalSales) * 100 : 0;
   const primeCostPercent = foodCostPercent + laborCostPercent;
 
-  const lowStockItems = data.inventory.filter(item => item.quantity <= item.reorderPoint);
+  const lowStockItems = data.inventory.filter(item => item.quantity <= item.reorderPoint && item.category !== ItemCategory.FinishedProduct);
   const totalBouncedCheques = data.cheques.filter(c => c.status === 'BOUNCED').length;
   const pendingPRs = data.purchases.filter(p => p.type === 'REQUEST' && p.status === 'REQUESTED').length;
   const activeCheques = data.cheques.filter(c => c.status === 'OUTSTANDING' || c.status === 'UNDER_COLLECTION');
@@ -90,7 +91,7 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
             {payload.map((entry: any, index: number) => {
               const color = entry.stroke && entry.stroke !== 'none' ? entry.stroke : (entry.fill || entry.color || '#3b82f6');
               return (
-                <div key={index} className="flex items-center justify-between gap-6">
+                <div key={entry.name} className="flex items-center justify-between gap-6">
                   <div className="flex items-center gap-2">
                     <span className="h-2 w-2 rounded-full animate-pulse" style={{ backgroundColor: color }} />
                     <span className="text-xs text-slate-600 dark:text-slate-300 font-extrabold">
@@ -131,7 +132,7 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
             <span className="text-xs font-mono font-black text-slate-900 dark:text-white">
               {formatCurrency(val)}
             </span>
-            <span className="text-[10px] font-black text-emerald-500 font-mono bg-emerald-500/10 dark:bg-emerald-500/20 px-1.5 py-0.5 rounded-md">
+            <span className="text-[10px] font-black text-slate-900 dark:text-white font-mono bg-emerald-500/10 dark:bg-emerald-500/20 px-1.5 py-0.5 rounded-md">
               {pct.toFixed(1)}%
             </span>
           </div>
@@ -239,7 +240,7 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
           </div>
           <div className="mt-4">
             <h3 className="text-xl font-extrabold text-slate-900 dark:text-white font-mono">{formatCurrency(totalSales)}</h3>
-            <span className="text-[10px] text-emerald-500 font-bold flex items-center gap-1 mt-1">
+            <span className="text-[10px] text-slate-900 dark:text-white font-bold flex items-center gap-1 mt-1">
               <ArrowUpRight className="h-3 w-3" />
               <span>{data.sales.length} {isAr ? 'فاتورة مسجلة' : 'invoices'}</span>
             </span>
@@ -249,13 +250,13 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
         <div className="bg-white dark:bg-slate-950 p-5 rounded-2xl border border-slate-100 dark:border-slate-800/80 shadow-xs flex flex-col justify-between">
           <div className="flex justify-between items-start">
             <span className="text-slate-500 text-xs font-bold">{isAr ? 'مجمل الربح' : 'Gross Profit'}</span>
-            <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600">
+            <div className="p-2 rounded-xl bg-emerald-500/10 text-slate-900 dark:text-white">
               <DollarSign className="h-4 w-4" />
             </div>
           </div>
           <div className="mt-4">
             <h3 className="text-xl font-extrabold text-slate-900 dark:text-white font-mono">{formatCurrency(grossProfit)}</h3>
-            <span className="text-[10px] text-emerald-500 font-bold flex items-center gap-1 mt-1">
+            <span className="text-[10px] text-slate-900 dark:text-white font-bold flex items-center gap-1 mt-1">
               <ArrowUpRight className="h-3 w-3" />
               <span>{formatPercent(totalSales > 0 ? (grossProfit / totalSales) * 100 : 0)} {isAr ? 'هامش مجمل الربح' : 'Margin'}</span>
             </span>
@@ -325,7 +326,7 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
         <div className="bg-white dark:bg-slate-950 p-5 rounded-2xl border border-slate-100 dark:border-slate-800/80 shadow-xs flex flex-col justify-between">
           <div className="flex justify-between items-start">
             <span className="text-slate-500 text-xs font-bold">{isAr ? 'النقدية بالخزائن' : 'Treasury Cash'}</span>
-            <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600">
+            <div className="p-2 rounded-xl bg-emerald-500/10 text-slate-900 dark:text-white">
               <Wallet className="h-4 w-4" />
             </div>
           </div>
@@ -375,7 +376,7 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
             </div>
           </div>
           <div className="mt-4">
-            <h3 className="text-xl font-extrabold text-rose-600 font-mono">{formatCurrency(supplierPayables)}</h3>
+            <h3 className="text-xl font-extrabold text-slate-900 dark:text-white font-mono">{formatCurrency(supplierPayables)}</h3>
             <span className="text-[10px] text-slate-500 font-bold flex items-center gap-1 mt-1">
               <span>{data.suppliers.length} {isAr ? 'مورد' : 'suppliers'}</span>
             </span>
@@ -400,12 +401,12 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
         <div className="bg-white dark:bg-slate-950 p-5 rounded-2xl border border-slate-100 dark:border-slate-800/80 shadow-xs flex flex-col justify-between">
           <div className="flex justify-between items-start">
             <span className="text-slate-500 text-xs font-bold">{isAr ? 'صافي السيولة' : 'Net Liquidity'}</span>
-            <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600">
+            <div className="p-2 rounded-xl bg-emerald-500/10 text-slate-900 dark:text-white">
               <TrendingUp className="h-4 w-4" />
             </div>
           </div>
           <div className="mt-4">
-            <h3 className="text-xl font-extrabold text-emerald-500 font-mono">{formatCurrency(cashInBox + bankBalances)}</h3>
+            <h3 className="text-xl font-extrabold text-slate-900 dark:text-white font-mono">{formatCurrency(cashInBox + bankBalances)}</h3>
             <span className="text-[10px] text-slate-500 font-bold flex items-center gap-1 mt-1">
               <span>{isAr ? 'نقدية + بنوك' : 'Cash & Banks'}</span>
             </span>
@@ -433,7 +434,7 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
                   onClick={() => setSalesChartType(type)}
                   className={`px-3 py-1.5 text-[9.5px] font-bold rounded-lg transition-all cursor-pointer ${
                     salesChartType === type
-                      ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-sky-400 shadow-sm font-black'
+                      ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm font-black'
                       : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-350'
                   }`}
                 >
@@ -501,13 +502,13 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
               
               <div>
                 <span className="text-[10px] font-bold text-slate-400 block">{isAr ? 'أعلى قمة مبيعات' : 'Highest daily peak'}</span>
-                <span className="text-sm font-black font-mono text-emerald-600 dark:text-emerald-400 block mt-0.5">{formatCurrency(peakSales.total)}</span>
+                <span className="text-sm font-black font-mono text-slate-900 dark:text-white block mt-0.5">{formatCurrency(peakSales.total)}</span>
                 <span className="text-[9px] text-slate-500 block font-bold">{isAr ? `في تاريخ ${peakSales.date}` : `on date ${peakSales.date}`}</span>
               </div>
               
               <div className="border-t border-slate-200/60 dark:border-slate-800 pt-3">
                 <span className="text-[10px] font-bold text-slate-400 block">{isAr ? 'متوسط المبيعات اليومية' : 'Daily sales average'}</span>
-                <span className="text-sm font-black font-mono text-blue-600 dark:text-sky-400 block mt-0.5">{formatCurrency(avgSales)}</span>
+                <span className="text-sm font-black font-mono text-slate-900 dark:text-white block mt-0.5">{formatCurrency(avgSales)}</span>
               </div>
 
               <div className="border-t border-slate-200/60 dark:border-slate-800 pt-3">
@@ -515,7 +516,7 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
                 <span className="text-xs font-black text-slate-800 dark:text-slate-200 block mt-0.5">
                   {formatPercent(foodCostPercent)}
                 </span>
-                <span className={`text-[8.5px] font-bold px-1.5 py-0.5 rounded mt-1 inline-block ${foodCostPercent <= 30 ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'}`}>
+                <span className={`text-[8.5px] font-bold px-1.5 py-0.5 rounded mt-1 inline-block ${foodCostPercent <= 30 ? 'bg-emerald-500/10 text-slate-900 dark:text-white' : 'bg-rose-500/10 text-rose-600'}`}>
                   {foodCostPercent <= 30 ? (isAr ? 'نطاق آمن ومربح' : 'Profitable range') : (isAr ? 'يتطلب مراجعة' : 'Needs audit')}
                 </span>
               </div>
@@ -545,7 +546,7 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
                       dataKey="value"
                     >
                       {channelData.map((entry, idx) => (
-                        <Cell key={idx} fill={entry.color} stroke={entry.color} strokeWidth={1} style={{ outline: 'none' }} />
+                        <Cell key={entry.name} fill={entry.color} stroke={entry.color} strokeWidth={1} style={{ outline: 'none' }} />
                       ))}
                     </Pie>
                     <Tooltip content={<CustomPieTooltip />} />
@@ -631,7 +632,7 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
                   <Tooltip content={<CustomTooltip />} />
                   <Bar dataKey="value" barSize={10} radius={[0, 5, 5, 0]}>
                     {expenseData.map((_entry, idx) => (
-                      <Cell key={idx} fill={`url(#expGrad-${idx % 5})`} />
+                      <Cell key={_entry.name} fill={`url(#expGrad-${idx % 5})`} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -662,7 +663,7 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
                     dataKey="value"
                   >
                     {inventoryCategoryData.map((entry, idx) => (
-                      <Cell key={idx} fill={entry.color} stroke={entry.color} strokeWidth={1} style={{ outline: 'none' }} />
+                      <Cell key={entry.name} fill={entry.color} stroke={entry.color} strokeWidth={1} style={{ outline: 'none' }} />
                     ))}
                   </Pie>
                   <Tooltip content={<CustomPieTooltip />} />
@@ -749,7 +750,7 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
                 {data.suppliers.filter(s => s.balance > 0).slice(0, 5).map(sup => (
                   <div key={sup.id} className="flex justify-between items-center p-2.5 rounded-xl bg-amber-500/5 border border-amber-100 dark:border-amber-900/30 text-xs font-semibold">
                     <span>{isAr ? sup.nameAr : sup.nameEn}</span>
-                    <span className="text-amber-700 dark:text-amber-500 font-bold font-mono">{formatCurrency(sup.balance)}</span>
+                    <span className="text-slate-900 dark:text-white font-bold font-mono">{formatCurrency(sup.balance)}</span>
                   </div>
                 ))}
               </div>
@@ -795,7 +796,7 @@ export default function Dashboard({ data, lang, setActiveTab }: DashboardProps) 
             <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">{isAr ? 'مشتريات' : 'Purchases'}</span>
           </button>
           <button onClick={() => setActiveTab('treasury')} className="p-3.5 rounded-xl bg-slate-50 hover:bg-blue-50 dark:bg-slate-900 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 text-center transition-colors">
-            <Wallet className="h-5 w-5 text-emerald-500 mx-auto mb-2" />
+            <Wallet className="h-5 w-5 text-slate-900 dark:text-white mx-auto mb-2" />
             <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">{isAr ? 'خزينة' : 'Treasury'}</span>
           </button>
         </div>

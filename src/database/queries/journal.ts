@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { generateId } from './utils';
 
 function mapEntry(db: Database.Database, je: any) {
-  const lines = db.prepare('SELECT accountId, debit, credit FROM journal_lines WHERE entryId = ?').all(je.id) as any[];
+  const lines = db.prepare('SELECT accountId, debit, credit, itemsJson FROM journal_lines WHERE entryId = ?').all(je.id) as any[];
   return {
     id: je.id,
     entryNumber: je.entryNumber,
@@ -11,7 +11,12 @@ function mapEntry(db: Database.Database, je: any) {
     description: je.description,
     approved: !!je.approved,
     approvedBy: je.approvedBy || undefined,
-    lines: lines.map(l => ({ accountId: l.accountId, debit: l.debit, credit: l.credit }))
+    lines: lines.map(l => ({
+      accountId: l.accountId,
+      debit: l.debit,
+      credit: l.credit,
+      items: l.itemsJson ? JSON.parse(l.itemsJson) : undefined
+    }))
   };
 }
 

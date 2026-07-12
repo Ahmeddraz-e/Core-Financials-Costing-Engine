@@ -11,10 +11,7 @@
 
 /** Opens a new print window with styled HTML content */
 export function printDocument(htmlContent: string, title: string): void {
-  const printWindow = window.open('', '_blank', 'width=800,height=600');
-  if (!printWindow) return;
-
-  printWindow.document.write(`
+  const fullHtml = `
     <!DOCTYPE html>
     <html dir="rtl" lang="ar">
     <head>
@@ -43,7 +40,6 @@ export function printDocument(htmlContent: string, title: string): void {
           position: relative;
         }
         
-        /* Company Header */
         .company-header {
           text-align: center;
           border-bottom: 3px solid #1e40af;
@@ -62,7 +58,6 @@ export function printDocument(htmlContent: string, title: string): void {
           font-weight: 600;
         }
         
-        /* Document Title */
         .doc-title {
           text-align: center;
           background: #f1f5f9;
@@ -82,7 +77,6 @@ export function printDocument(htmlContent: string, title: string): void {
           font-weight: 700;
         }
         
-        /* Info Grid */
         .info-grid {
           display: grid;
           grid-template-columns: 1fr 1fr;
@@ -106,7 +100,6 @@ export function printDocument(htmlContent: string, title: string): void {
           color: #0f172a;
         }
         
-        /* Table */
         table {
           width: 100%;
           border-collapse: collapse;
@@ -131,7 +124,6 @@ export function printDocument(htmlContent: string, title: string): void {
         tbody tr:nth-child(even) { background: #f8fafc; }
         tbody tr:hover { background: #eff6ff; }
         
-        /* Totals */
         .totals-section {
           display: flex;
           justify-content: flex-start;
@@ -158,7 +150,6 @@ export function printDocument(htmlContent: string, title: string): void {
           font-weight: 900;
         }
         
-        /* Amount in words */
         .amount-words {
           background: #fffbeb;
           border: 1px solid #fbbf24;
@@ -170,7 +161,6 @@ export function printDocument(htmlContent: string, title: string): void {
           color: #92400e;
         }
         
-        /* Signatures */
         .signatures {
           display: grid;
           grid-template-columns: 1fr 1fr 1fr;
@@ -195,7 +185,6 @@ export function printDocument(htmlContent: string, title: string): void {
           color: #94a3b8;
         }
         
-        /* Footer */
         .print-footer {
           position: absolute;
           bottom: 10mm;
@@ -208,7 +197,6 @@ export function printDocument(htmlContent: string, title: string): void {
           padding-top: 6px;
         }
         
-        /* Voucher specific */
         .voucher-amount {
           text-align: center;
           font-size: 28px;
@@ -221,7 +209,6 @@ export function printDocument(htmlContent: string, title: string): void {
           background: #eff6ff;
         }
         
-        /* Statement specific */
         .balance-summary {
           display: flex;
           gap: 15px;
@@ -260,19 +247,37 @@ export function printDocument(htmlContent: string, title: string): void {
       </style>
     </head>
     <body>
-      <div class="no-print" style="text-align:center; padding:10px; background:#f1f5f9;">
-        <button onclick="window.print()" style="padding:8px 24px; background:#1e40af; color:#fff; border:none; border-radius:6px; font-family:Cairo; font-weight:700; cursor:pointer; font-size:13px;">
-          🖨️ طباعة
-        </button>
-        <button onclick="window.close()" style="padding:8px 24px; background:#64748b; color:#fff; border:none; border-radius:6px; font-family:Cairo; font-weight:700; cursor:pointer; margin-right:8px; font-size:13px;">
-          ✕ إغلاق
-        </button>
-      </div>
       ${htmlContent}
     </body>
     </html>
-  `);
-  printWindow.document.close();
+  `;
+
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.top = '-9999px';
+  iframe.style.left = '-9999px';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.title = title;
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document;
+  if (doc) {
+    doc.open();
+    doc.write(fullHtml);
+    doc.close();
+  }
+
+  setTimeout(() => {
+    iframe.contentWindow?.focus();
+    iframe.contentWindow?.print();
+  }, 500);
+
+  const onPrint = () => {
+    if (document.body.contains(iframe)) document.body.removeChild(iframe);
+    window.removeEventListener('focus', onPrint);
+  };
+  window.addEventListener('focus', onPrint);
 }
 
 /** Format currency with EGP */
@@ -332,13 +337,23 @@ export function numberToArabicWords(num: number): string {
       else prefix = `${convertGroup(thousands)} ألف`;
       return remainder > 0 ? `${prefix} و${convertGroup(remainder)}` : prefix;
     }
-    // Millions
-    const millions = Math.floor(n / 1000000);
-    const remainder = n % 1000000;
+    if (n < 1000000000) {
+      const millions = Math.floor(n / 1000000);
+      const remainder = n % 1000000;
+      let prefix = '';
+      if (millions === 1) prefix = 'مليون';
+      else if (millions === 2) prefix = 'مليونان';
+      else prefix = `${convertGroup(millions)} مليون`;
+      return remainder > 0 ? `${prefix} و${convertGroup(remainder)}` : prefix;
+    }
+    // Billions
+    const billions = Math.floor(n / 1000000000);
+    const remainder = n % 1000000000;
     let prefix = '';
-    if (millions === 1) prefix = 'مليون';
-    else if (millions === 2) prefix = 'مليونان';
-    else prefix = `${convertGroup(millions)} مليون`;
+    if (billions === 1) prefix = 'مليار';
+    else if (billions === 2) prefix = 'ملياران';
+    else if (billions <= 10) prefix = `${convertGroup(billions)} مليارات`;
+    else prefix = `${convertGroup(billions)} مليار`;
     return remainder > 0 ? `${prefix} و${convertGroup(remainder)}` : prefix;
   }
   
@@ -351,12 +366,36 @@ export function numberToArabicWords(num: number): string {
 }
 
 /** Company header HTML block */
-export function companyHeaderHTML(companyName: string = 'LODing Group'): string {
+export function companyHeaderHTML(): string {
+  let profile = {
+    nameAr: 'لودينغ للأغذية',
+    nameEn: 'LODing Foods',
+    registrationNumber: 'ERP-2026-01',
+    taxNumber: '123456789',
+    addressAr: '123 شارع المهندسين، الجيزة',
+    addressEn: 'Mohandessin St, Giza 123',
+    email: 'info@loding-erp.com',
+    phone: '+20 2 1234 5678'
+  };
+
+  try {
+    const saved = localStorage.getItem('erp_company_profile');
+    if (saved) {
+      profile = JSON.parse(saved);
+    }
+  } catch (e) {}
+
   return `
     <div class="company-header">
-      <h1>${companyName}</h1>
+      <h1>${profile.nameAr} - ${profile.nameEn}</h1>
       <div class="subtitle">نظام إدارة الموارد المؤسسية — LODing ERP</div>
-      <div class="subtitle" style="font-size:8px;">السجل التجاري: ________ | الرقم الضريبي: ________ | العنوان: ________</div>
+      <div class="subtitle" style="font-size:8px; margin-top: 4px;">
+        السجل التجاري: ${profile.registrationNumber} | 
+        الرقم الضريبي: ${profile.taxNumber} | 
+        العنوان: ${profile.addressAr} | 
+        الهاتف: ${profile.phone} | 
+        البريد: ${profile.email}
+      </div>
     </div>
   `;
 }
@@ -382,6 +421,70 @@ export function footerHTML(): string {
       تم الإنشاء بواسطة نظام LODing ERP — ${new Date().toLocaleDateString('ar-EG-u-nu-latn')} — هذا المستند صادر آلياً ولا يحتاج توقيع إلا في حال الاعتماد اليدوي
     </div>
   `;
+}
+
+/** Print HTML content of a DOM element by its ID */
+export function printElementById(elementId: string, title: string): void {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  const content = el.innerHTML;
+
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.top = '-9999px';
+  iframe.style.left = '-9999px';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.title = title;
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document;
+  if (doc) {
+    doc.open();
+    doc.write(`
+      <!DOCTYPE html>
+      <html dir="rtl" lang="ar">
+      <head>
+        <meta charset="UTF-8">
+        <title>${title}</title>
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body {
+            font-family: 'Cairo', 'Segoe UI', sans-serif;
+            color: #1e293b;
+            background: #fff;
+            padding: 20px;
+            font-size: 12px;
+            line-height: 1.6;
+            direction: rtl;
+          }
+          table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+          th { background: #1e40af; color: #fff; padding: 8px 10px; font-size: 11px; font-weight: 700; text-align: center; border: 1px solid #1e3a8a; }
+          td { padding: 6px 8px; border: 1px solid #e2e8f0; font-size: 11px; }
+          h1, h2, h3 { color: #1e3a8a; }
+          .no-print { display: none !important; }
+          @media print { body { padding: 10px; } }
+        </style>
+      </head>
+      <body>
+        ${content}
+      </body>
+      </html>
+    `);
+    doc.close();
+  }
+
+  setTimeout(() => {
+    iframe.contentWindow?.focus();
+    iframe.contentWindow?.print();
+  }, 500);
+
+  const onPrint = () => {
+    if (document.body.contains(iframe)) document.body.removeChild(iframe);
+    window.removeEventListener('focus', onPrint);
+  };
+  window.addEventListener('focus', onPrint);
 }
 
 /** Export data to CSV (Excel-compatible) */

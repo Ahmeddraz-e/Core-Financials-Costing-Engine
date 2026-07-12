@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { BookOpen, Search, Printer, Download } from 'lucide-react';
+import { BookOpen, Search, FileSpreadsheet, Download } from 'lucide-react';
 import { ERPData, Account, JournalEntry } from '../types';
 import { printDocument, fmtCurrency, fmtDate, companyHeaderHTML, signaturesHTML, footerHTML, exportToCSV } from '../utils/printUtils';
 
@@ -47,8 +47,12 @@ export default function GeneralLedger({ data, lang }: GeneralLedgerProps) {
       });
     });
 
-    // Sort chronologically
-    rawRows.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    // Sort by date ascending, then by entry number for same-date entries
+    rawRows.sort((a, b) => {
+      const dateDiff = new Date(a.date).getTime() - new Date(b.date).getTime();
+      if (dateDiff !== 0) return dateDiff;
+      return a.entryNumber.localeCompare(b.entryNumber, undefined, { numeric: true });
+    });
 
     let runningBalance = 0;
     let openingBalance = 0;
@@ -98,72 +102,7 @@ export default function GeneralLedger({ data, lang }: GeneralLedgerProps) {
   const ledger = useMemo(() => generateLedger(), [accountId, startDate, endDate, data]);
   const selectedAccount = data.accounts.find(a => a.id === accountId);
 
-  const handlePrint = () => {
-    if (!selectedAccount || ledger.length === 0) return;
 
-    const rowsHTML = ledger.map(row => `
-      <tr>
-        <td style="white-space:nowrap">${fmtDate(row.date, lang)}</td>
-        <td>${row.entryNumber}</td>
-        <td>${row.description}</td>
-        <td style="text-align:left">${row.debit > 0 ? fmtCurrency(row.debit, lang) : '-'}</td>
-        <td style="text-align:left">${row.credit > 0 ? fmtCurrency(row.credit, lang) : '-'}</td>
-        <td style="text-align:left; font-weight:800; background:#f8fafc">${fmtCurrency(row.balanceAfter, lang)}</td>
-      </tr>
-    `).join('');
-
-    const totalDebit = ledger.reduce((sum, r) => sum + r.debit, 0);
-    const totalCredit = ledger.reduce((sum, r) => sum + r.credit, 0);
-
-    const html = `
-      <div class="print-page">
-        ${companyHeaderHTML()}
-        <div class="doc-title">
-          <h2>${isAr ? 'دفتر الأستاذ العام' : 'General Ledger'}</h2>
-          <div class="doc-number">${selectedAccount.code} - ${isAr ? selectedAccount.nameAr : selectedAccount.nameEn} (${isAr ? 'النوع:' : 'Type:'} ${selectedAccount.type})</div>
-        </div>
-
-        <div class="info-grid">
-          <div class="info-box"><div class="label">${isAr ? 'الفترة من' : 'Period From'}</div><div class="value">${startDate ? fmtDate(startDate, lang) : '-'}</div></div>
-          <div class="info-box"><div class="label">${isAr ? 'الفترة إلى' : 'Period To'}</div><div class="value">${endDate ? fmtDate(endDate, lang) : '-'}</div></div>
-          <div class="info-box"><div class="label">${isAr ? 'تاريخ الطباعة' : 'Print Date'}</div><div class="value">${fmtDate(new Date().toISOString(), lang)}</div></div>
-          <div class="info-box"><div class="label">${isAr ? 'الرصيد الدفتري الحالي' : 'Current Book Balance'}</div><div class="value">${fmtCurrency(selectedAccount.balance, lang)}</div></div>
-        </div>
-
-        <table>
-          <thead>
-            <tr>
-              <th style="width:15%">${isAr ? 'التاريخ' : 'Date'}</th>
-              <th style="width:15%">${isAr ? 'رقم القيد' : 'Entry #'}</th>
-              <th style="width:30%">${isAr ? 'البيان' : 'Description'}</th>
-              <th style="width:13%">${isAr ? 'مدين' : 'Debit'}</th>
-              <th style="width:13%">${isAr ? 'دائن' : 'Credit'}</th>
-              <th style="width:14%">${isAr ? 'الرصيد' : 'Balance'}</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rowsHTML}
-            <tr style="background:#1e40af; color:#fff; font-weight:900;">
-              <td colspan="3" style="text-align:left">${isAr ? 'الإجمالي' : 'Total'}</td>
-              <td style="text-align:left; border-right:1px solid #3b82f6">${fmtCurrency(totalDebit, lang)}</td>
-              <td style="text-align:left; border-right:1px solid #3b82f6">${fmtCurrency(totalCredit, lang)}</td>
-              <td style="text-align:left; border-right:1px solid #3b82f6">${fmtCurrency(ledger[ledger.length - 1]?.balanceAfter || 0, lang)}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        ${signaturesHTML([
-          isAr ? 'إعداد' : 'Prepared By',
-          isAr ? 'مراجعة' : 'Reviewed By',
-          isAr ? 'اعتماد الإدارة المالية' : 'Finance Approval'
-        ])}
-
-        ${footerHTML()}
-      </div>
-    `;
-
-    printDocument(html, `${isAr ? 'دفتر الأستاذ' : 'GL'} - ${selectedAccount.code}`);
-  };
 
   const handleExport = () => {
     if (ledger.length === 0) return;
@@ -183,7 +122,7 @@ export default function GeneralLedger({ data, lang }: GeneralLedgerProps) {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
-            <BookOpen className="h-5.5 w-5.5 text-blue-600" />
+            <BookOpen className="h-5.5 w-5.5 text-slate-900 dark:text-white" />
             <span>{isAr ? 'دفتر الأستاذ المساعد' : 'General Ledger Detailed'}</span>
           </h1>
           <p className="text-slate-500 dark:text-slate-400 text-xs font-semibold">
@@ -192,12 +131,9 @@ export default function GeneralLedger({ data, lang }: GeneralLedgerProps) {
         </div>
         {ledger.length > 0 && (
           <div className="flex items-center gap-2">
-            <button onClick={handleExport} className="px-3 py-2 text-xs font-bold rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 flex items-center gap-1">
-              <Download className="h-3.5 w-3.5" /> Excel
-            </button>
-            <button onClick={handlePrint} className="px-4 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700 flex items-center gap-1.5 shadow-lg">
-              <Printer className="h-3.5 w-3.5" />
-              {isAr ? 'طباعة الدفتر' : 'Print Ledger'}
+            <button onClick={handleExport} className="px-4 py-2 text-xs font-bold rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white flex items-center gap-1.5 shadow-lg cursor-pointer">
+              <FileSpreadsheet className="h-4 w-4" />
+              {isAr ? 'تصدير دفتر الأستاذ إلى Excel' : 'Export Ledger to Excel'}
             </button>
           </div>
         )}
@@ -237,7 +173,7 @@ export default function GeneralLedger({ data, lang }: GeneralLedgerProps) {
             </h3>
             <div className="flex gap-4 mt-2">
               <p className="text-xs font-bold text-slate-500">
-                {isAr ? 'الرصيد الدفتري الحالي:' : 'Current Book Balance:'} <span className="text-blue-600">{fmtCurrency(selectedAccount?.balance || 0, lang)}</span>
+                {isAr ? 'الرصيد الدفتري الحالي:' : 'Current Book Balance:'} <span className="text-slate-900 dark:text-white">{fmtCurrency(selectedAccount?.balance || 0, lang)}</span>
               </p>
               <p className="text-xs font-bold text-slate-500">
                 {isAr ? 'طبيعة الحساب:' : 'Account Nature:'} <span className="text-slate-700 dark:text-slate-300">{selectedAccount?.type}</span>
@@ -266,13 +202,13 @@ export default function GeneralLedger({ data, lang }: GeneralLedgerProps) {
                   </tr>
                 ) : (
                   ledger.map((row, idx) => (
-                    <tr key={idx} className={`border-b border-slate-100 dark:border-slate-800/50 ${row.type === 'OPENING' ? 'bg-amber-50/50 dark:bg-amber-900/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/30'}`}>
+                    <tr key={row.entryNumber} className={`border-b border-slate-100 dark:border-slate-800/50 ${row.type === 'OPENING' ? 'bg-amber-50/50 dark:bg-amber-900/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/30'}`}>
                       <td className="px-4 py-2.5 font-bold text-slate-600 dark:text-slate-400 whitespace-nowrap">{row.date}</td>
-                      <td className="px-4 py-2.5 font-bold text-blue-600">{row.entryNumber}</td>
+                      <td className="px-4 py-2.5 font-bold text-slate-900 dark:text-white">{row.entryNumber}</td>
                       <td className="px-4 py-2.5 font-bold text-slate-800 dark:text-slate-200">{row.description}</td>
                       <td className="px-4 py-2.5 font-black text-slate-700 dark:text-slate-300 text-left">{row.debit > 0 ? fmtCurrency(row.debit, lang) : '-'}</td>
                       <td className="px-4 py-2.5 font-black text-slate-700 dark:text-slate-300 text-left">{row.credit > 0 ? fmtCurrency(row.credit, lang) : '-'}</td>
-                      <td className="px-4 py-2.5 font-black text-blue-600 dark:text-blue-400 text-left bg-slate-50 dark:bg-slate-800/40">
+                      <td className="px-4 py-2.5 font-black text-slate-900 dark:text-white dark:text-white text-left bg-slate-50 dark:bg-slate-800/40">
                         {fmtCurrency(row.balanceAfter, lang)}
                       </td>
                     </tr>

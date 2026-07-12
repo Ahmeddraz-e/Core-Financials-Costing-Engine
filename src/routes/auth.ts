@@ -6,41 +6,6 @@ import { createLog } from '../database/queries/audit';
 export function authRouter(db: Database.Database): Router {
   const router = Router();
 
-  // Temporary debug endpoint to list users
-  router.get('/debug-users', (_req, res) => {
-    try {
-      const users = db.prepare('SELECT id, username, role, passwordHash FROM users').all();
-      res.json(users);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Temporary debug login simulation
-  router.post('/debug-login', (req, res) => {
-    try {
-      const { username, password } = req.body;
-      const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as any;
-      if (!user) {
-        res.json({ step: 'find_user', status: 'fail', message: 'User not found' });
-        return;
-      }
-      const { verifyPassword } = require('../database/queries/utils');
-      const passMatches = verifyPassword(password, user.passwordHash);
-      res.json({
-        step: 'verify_password',
-        status: passMatches ? 'success' : 'fail',
-        usernameInput: username,
-        dbUsername: user.username,
-        passwordInput: password,
-        storedHash: user.passwordHash,
-        matches: passMatches
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
   // POST /api/auth/login
   router.post('/login', (req, res) => {
     try {

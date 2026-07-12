@@ -1,11 +1,25 @@
 import React, { useState, useMemo } from 'react';
-import { Clock, Download, Printer, Users } from 'lucide-react';
-import { ERPData, Customer, Supplier } from '../types';
-import { printDocument, fmtCurrency, fmtDate, companyHeaderHTML, signaturesHTML, footerHTML } from '../utils/printUtils';
+import { Clock, Download, FileSpreadsheet, Users } from 'lucide-react';
+import { ERPData, Customer, Supplier, SalesInvoice, PurchaseTransaction } from '../types';
+import { printDocument, fmtCurrency, fmtDate, companyHeaderHTML, signaturesHTML, footerHTML, exportToCSV } from '../utils/printUtils';
 
 interface AgingReportProps {
   data: ERPData;
   lang: 'ar' | 'en';
+}
+
+function daysOverdue(dateStr: string): number {
+  const today = new Date();
+  const due = new Date(dateStr);
+  const diff = today.getTime() - due.getTime();
+  return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)));
+}
+
+function bucketAmount(days: number, amount: number): [number, number, number, number] {
+  if (days <= 30) return [amount, 0, 0, 0];
+  if (days <= 60) return [0, amount, 0, 0];
+  if (days <= 90) return [0, 0, amount, 0];
+  return [0, 0, 0, amount];
 }
 
 export default function AgingReport({ data, lang }: AgingReportProps) {
@@ -13,52 +27,100 @@ export default function AgingReport({ data, lang }: AgingReportProps) {
   
   const [activeTab, setActiveTab] = useState<'CUSTOMERS' | 'SUPPLIERS'>('CUSTOMERS');
   
-  const formatCurrency = (val: number) =>
-    new Intl.NumberFormat(isAr ? 'ar-EG' : 'en-US', { style: 'currency', currency: 'EGP' }).format(val);
+  const formatCurrency = (val: number) => {
+    const formattedNum = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(val);
+    return isAr ? `${formattedNum} ج.م` : `${formattedNum} EGP`;
+  }
 
-  // Since we don't have individual invoice due dates linked to balances in the simplified schema,
-  // we will simulate aging based on recent transaction activity for demonstration,
-  // OR we can just show the total balance and distribute it based on standard accounting estimations
-  // for a "Proof of Concept" until invoice-level tracking is fully implemented.
-  // We'll distribute the balance into 0-30, 31-60, 61-90, 90+ buckets.
-  
-  const generateAgingData = (parties: (Customer | Supplier)[], type: 'CUSTOMERS' | 'SUPPLIERS') => {
-    return parties.filter(p => p.balance > 0).map(p => {
-      // In a real scenario, this is calculated by summing unpaid invoices by age.
-      // Here we simulate it based on the balance size.
-      let b = p.balance;
-      
-      // Artificial distribution for demo purposes
-      let d0_30 = 0, d31_60 = 0, d61_90 = 0, d90_plus = 0;
-      
-      if (b > 50000) {
-        d90_plus = b * 0.2;
-        d61_90 = b * 0.3;
-        d31_60 = b * 0.2;
-        d0_30 = b * 0.3;
-      } else if (b > 10000) {
-        d61_90 = b * 0.2;
-        d31_60 = b * 0.3;
-        d0_30 = b * 0.5;
+  const customersAging = useMemo(() => {
+    const invoiceMap = new Map<string, { d0_30: number; d31_60: number; d61_90: number; d90_plus: number }>();
+
+    for (const inv of (data.salesInvoices || [])) {
+      const outstanding = inv.totalAmount - (inv.paidAmount || 0);
+      if (outstanding <= 0) continue;
+      const days = daysOverdue(inv.dueDate || inv.date);
+      const [a, b, c, d] = bucketAmount(days, outstanding);
+      const entry = invoiceMap.get(inv.customerId);
+      if (entry) {
+        entry.d0_30 += a;
+        entry.d31_60 += b;
+        entry.d61_90 += c;
+        entry.d90_plus += d;
       } else {
-        d31_60 = b * 0.1;
-        d0_30 = b * 0.9;
+        invoiceMap.set(inv.customerId, { d0_30: a, d31_60: b, d61_90: c, d90_plus: d });
       }
+    }
 
-      return {
-        id: p.id,
-        name: isAr ? p.nameAr : p.nameEn,
-        total: b,
-        d0_30,
-        d31_60,
-        d61_90,
-        d90_plus
-      };
-    }).sort((a, b) => b.total - a.total);
-  };
+    // Include POS sales (customerId in description metadata)
+    for (const sale of (data.sales || [])) {
+      try {
+        const metaMatch = sale.description?.match(/\[({.*})\]/);
+        if (metaMatch) {
+          const meta = JSON.parse(metaMatch[1]);
+          if (meta.customer) {
+            const days = daysOverdue(sale.date);
+            const [a, b, c, d] = bucketAmount(days, sale.totalAmount);
+            const entry = invoiceMap.get(meta.customer);
+            if (entry) {
+              entry.d0_30 += a;
+              entry.d31_60 += b;
+              entry.d61_90 += c;
+              entry.d90_plus += d;
+            } else {
+              invoiceMap.set(meta.customer, { d0_30: a, d31_60: b, d61_90: c, d90_plus: d });
+            }
+          }
+        }
+      } catch (e) {}
+    }
 
-  const customersAging = useMemo(() => generateAgingData(data.customers, 'CUSTOMERS'), [data.customers]);
-  const suppliersAging = useMemo(() => generateAgingData(data.suppliers, 'SUPPLIERS'), [data.suppliers]);
+    return data.customers
+      .filter(c => (invoiceMap.get(c.id)?.d0_30 || 0) + (invoiceMap.get(c.id)?.d31_60 || 0) + (invoiceMap.get(c.id)?.d61_90 || 0) + (invoiceMap.get(c.id)?.d90_plus || 0) > 0)
+      .map(c => {
+        const inv = invoiceMap.get(c.id) || { d0_30: 0, d31_60: 0, d61_90: 0, d90_plus: 0 };
+        return {
+          id: c.id,
+          name: isAr ? c.nameAr : c.nameEn,
+          total: inv.d0_30 + inv.d31_60 + inv.d61_90 + inv.d90_plus,
+          ...inv
+        };
+      })
+      .sort((a, b) => b.total - a.total);
+  }, [data.customers, data.salesInvoices, data.sales, isAr]);
+
+  const suppliersAging = useMemo(() => {
+    const purchaseMap = new Map<string, { d0_30: number; d31_60: number; d61_90: number; d90_plus: number }>();
+
+    for (const po of (data.purchases || [])) {
+      if (po.status === 'PAID') continue;
+      const outstanding = po.totalAmount;
+      if (outstanding <= 0) continue;
+      const days = daysOverdue(po.date);
+      const [a, b, c, d] = bucketAmount(days, outstanding);
+      const entry = purchaseMap.get(po.supplierId);
+      if (entry) {
+        entry.d0_30 += a;
+        entry.d31_60 += b;
+        entry.d61_90 += c;
+        entry.d90_plus += d;
+      } else {
+        purchaseMap.set(po.supplierId, { d0_30: a, d31_60: b, d61_90: c, d90_plus: d });
+      }
+    }
+
+    return data.suppliers
+      .filter(s => (purchaseMap.get(s.id)?.d0_30 || 0) + (purchaseMap.get(s.id)?.d31_60 || 0) + (purchaseMap.get(s.id)?.d61_90 || 0) + (purchaseMap.get(s.id)?.d90_plus || 0) > 0)
+      .map(s => {
+        const po = purchaseMap.get(s.id) || { d0_30: 0, d31_60: 0, d61_90: 0, d90_plus: 0 };
+        return {
+          id: s.id,
+          name: isAr ? s.nameAr : s.nameEn,
+          total: po.d0_30 + po.d31_60 + po.d61_90 + po.d90_plus,
+          ...po
+        };
+      })
+      .sort((a, b) => b.total - a.total);
+  }, [data.suppliers, data.purchases, isAr]);
 
   const currentData = activeTab === 'CUSTOMERS' ? customersAging : suppliersAging;
   
@@ -70,63 +132,25 @@ export default function AgingReport({ data, lang }: AgingReportProps) {
     d90_plus: acc.d90_plus + curr.d90_plus
   }), { total: 0, d0_30: 0, d31_60: 0, d61_90: 0, d90_plus: 0 });
 
-  const handlePrint = () => {
-    const title = activeTab === 'CUSTOMERS' ? (isAr ? 'تقرير أعمار الديون - العملاء' : 'Accounts Receivable Aging Report') : (isAr ? 'تقرير أعمار الديون - الموردين' : 'Accounts Payable Aging Report');
-    const tableHTML = currentData.map(row => `
-      <tr>
-        <td style="padding:8px; border-bottom:1px solid #e2e8f0; font-weight:bold;">${row.name}</td>
-        <td style="text-align:center; padding:8px; border-bottom:1px solid #e2e8f0;">${fmtCurrency(row.d0_30, lang)}</td>
-        <td style="text-align:center; padding:8px; border-bottom:1px solid #e2e8f0;">${fmtCurrency(row.d31_60, lang)}</td>
-        <td style="text-align:center; padding:8px; border-bottom:1px solid #e2e8f0;">${fmtCurrency(row.d61_90, lang)}</td>
-        <td style="text-align:center; padding:8px; border-bottom:1px solid #e2e8f0; color:#dc2626; font-weight:bold;">${fmtCurrency(row.d90_plus, lang)}</td>
-        <td style="text-align:center; padding:8px; border-bottom:1px solid #e2e8f0; font-weight:900;">${fmtCurrency(row.total, lang)}</td>
-      </tr>
-    `).join('');
-
-    const html = `
-      <div class="print-page" style="max-width:297mm; padding:15mm;">
-        ${companyHeaderHTML()}
-        <div class="doc-title">
-          <h2>${title}</h2>
-          <div class="doc-number">${isAr ? 'تاريخ التقرير:' : 'As of:'} ${fmtDate(new Date().toISOString().split('T')[0], lang)}</div>
-        </div>
-
-        <table style="width:100%; border-collapse:collapse; margin-top:20px; font-size:12px;">
-          <thead>
-            <tr style="background:#1e40af; color:white;">
-              <th style="padding:10px; text-align:${isAr ? 'right' : 'left'};">${isAr ? 'اسم الجهة' : 'Party Name'}</th>
-              <th style="padding:10px; text-align:center;">1 - 30 ${isAr ? 'يوم' : 'Days'}</th>
-              <th style="padding:10px; text-align:center;">31 - 60 ${isAr ? 'يوم' : 'Days'}</th>
-              <th style="padding:10px; text-align:center;">61 - 90 ${isAr ? 'يوم' : 'Days'}</th>
-              <th style="padding:10px; text-align:center; background:#991b1b;">+90 ${isAr ? 'يوم' : 'Days'}</th>
-              <th style="padding:10px; text-align:center;">${isAr ? 'الإجمالي' : 'Total'}</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${tableHTML}
-            <tr style="background:#f1f5f9; font-weight:900;">
-              <td style="padding:12px;">${isAr ? 'الإجمالي العام' : 'Grand Total'}</td>
-              <td style="text-align:center; padding:12px;">${fmtCurrency(totals.d0_30, lang)}</td>
-              <td style="text-align:center; padding:12px;">${fmtCurrency(totals.d31_60, lang)}</td>
-              <td style="text-align:center; padding:12px;">${fmtCurrency(totals.d61_90, lang)}</td>
-              <td style="text-align:center; padding:12px; color:#dc2626;">${fmtCurrency(totals.d90_plus, lang)}</td>
-              <td style="text-align:center; padding:12px;">${fmtCurrency(totals.total, lang)}</td>
-            </tr>
-          </tbody>
-        </table>
-        
-        <div style="margin-top:20px; font-size:10px; color:#64748b;">
-          ${isAr ? '* هذا التقرير يوضح أعمار الديون والمستحقات لتسهيل عملية التحصيل والسداد.' : '* This report details aging balances to facilitate collection and payment processes.'}
-        </div>
-
-        ${signaturesHTML([
-          isAr ? 'إعداد' : 'Prepared By',
-          isAr ? 'مراجعة' : 'Reviewed By',
-          isAr ? 'المدير المالي' : 'Finance Manager'
-        ])}
-      </div>
-    `;
-    printDocument(html, `${title}`);
+  const handleExport = () => {
+    const filename = activeTab === 'CUSTOMERS' ? 'AR_Aging_Report' : 'AP_Aging_Report';
+    const rows = currentData.map(row => ({
+      [isAr ? 'الاسم' : 'Name']: row.name,
+      '1 - 30': row.d0_30,
+      '31 - 60': row.d31_60,
+      '61 - 90': row.d61_90,
+      '+90': row.d90_plus,
+      [isAr ? 'الإجمالي' : 'Total']: row.total
+    }));
+    rows.push({
+      [isAr ? 'الاسم' : 'Name']: isAr ? 'الإجمالي العام' : 'Grand Total',
+      '1 - 30': totals.d0_30,
+      '31 - 60': totals.d31_60,
+      '61 - 90': totals.d61_90,
+      '+90': totals.d90_plus,
+      [isAr ? 'الإجمالي' : 'Total']: totals.total
+    });
+    exportToCSV(rows, filename);
   };
 
   return (
@@ -142,9 +166,9 @@ export default function AgingReport({ data, lang }: AgingReportProps) {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={handlePrint} className="px-4 py-2 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1.5 shadow-lg">
-            <Printer className="h-4 w-4" />
-            {isAr ? 'طباعة التقرير' : 'Print Report'}
+          <button onClick={handleExport} className="px-4 py-2 text-xs font-bold rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white flex items-center gap-1.5 shadow-lg cursor-pointer">
+            <FileSpreadsheet className="h-4 w-4" />
+            {isAr ? 'تصدير التقرير إلى Excel' : 'Export Aging Report'}
           </button>
         </div>
       </div>
@@ -171,7 +195,7 @@ export default function AgingReport({ data, lang }: AgingReportProps) {
                 <th className="text-center px-4 py-3 font-bold text-slate-500">1 - 30 {isAr ? 'يوم' : 'Days'}</th>
                 <th className="text-center px-4 py-3 font-bold text-slate-500">31 - 60 {isAr ? 'يوم' : 'Days'}</th>
                 <th className="text-center px-4 py-3 font-bold text-slate-500">61 - 90 {isAr ? 'يوم' : 'Days'}</th>
-                <th className="text-center px-4 py-3 font-bold text-red-600 dark:text-red-400 bg-red-50/50 dark:bg-red-900/10">+90 {isAr ? 'يوم' : 'Days'}</th>
+                <th className="text-center px-4 py-3 font-bold text-slate-500 bg-slate-50/80 dark:bg-slate-800/20">+90 {isAr ? 'يوم' : 'Days'}</th>
                 <th className="text-left px-4 py-3 font-black text-slate-900 dark:text-white">{isAr ? 'الإجمالي المستحق' : 'Total Due'}</th>
               </tr>
             </thead>
@@ -184,8 +208,8 @@ export default function AgingReport({ data, lang }: AgingReportProps) {
                     <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">{row.name}</td>
                     <td className="px-4 py-3 text-center">{fmtCurrency(row.d0_30)}</td>
                     <td className="px-4 py-3 text-center">{fmtCurrency(row.d31_60)}</td>
-                    <td className="px-4 py-3 text-center text-amber-600 dark:text-amber-500">{fmtCurrency(row.d61_90)}</td>
-                    <td className="px-4 py-3 text-center font-bold text-red-600 dark:text-red-500 bg-red-50/30 dark:bg-red-900/5">{fmtCurrency(row.d90_plus)}</td>
+                    <td className="px-4 py-3 text-center text-slate-700 dark:text-slate-300">{fmtCurrency(row.d61_90)}</td>
+                    <td className="px-4 py-3 text-center font-bold text-slate-900 dark:text-white bg-slate-50/30 dark:bg-slate-800/5">{fmtCurrency(row.d90_plus)}</td>
                     <td className="px-4 py-3 font-black text-slate-900 dark:text-white text-left">{fmtCurrency(row.total)}</td>
                   </tr>
                 ))
@@ -197,9 +221,9 @@ export default function AgingReport({ data, lang }: AgingReportProps) {
                   <td className="px-4 py-4 text-slate-900 dark:text-white">{isAr ? 'الإجمالي العام' : 'Grand Total'}</td>
                   <td className="px-4 py-4 text-center">{formatCurrency(totals.d0_30)}</td>
                   <td className="px-4 py-4 text-center">{formatCurrency(totals.d31_60)}</td>
-                  <td className="px-4 py-4 text-center text-amber-600 dark:text-amber-400">{formatCurrency(totals.d61_90)}</td>
-                  <td className="px-4 py-4 text-center text-red-600 dark:text-red-400">{formatCurrency(totals.d90_plus)}</td>
-                  <td className="px-4 py-4 text-left text-blue-600 dark:text-blue-400">{formatCurrency(totals.total)}</td>
+                  <td className="px-4 py-4 text-center text-slate-900 dark:text-white">{formatCurrency(totals.d61_90)}</td>
+                  <td className="px-4 py-4 text-center text-slate-900 dark:text-white">{formatCurrency(totals.d90_plus)}</td>
+                  <td className="px-4 py-4 text-left text-slate-900 dark:text-white">{formatCurrency(totals.total)}</td>
                 </tr>
               </tfoot>
             )}

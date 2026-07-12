@@ -84,10 +84,10 @@ export function getInventorySummary(db: Database.Database) {
 }
 
 export function getLowStockCount(db: Database.Database): number {
-  const r = db.prepare('SELECT COUNT(*) as cnt FROM inventory WHERE quantity <= reorderPoint').get() as any;
+  const r = db.prepare("SELECT COUNT(*) as cnt FROM inventory WHERE quantity <= reorderPoint AND category !== 'FINISHED_PRODUCT'").get() as any;
   return r.cnt;
 }
 
 export function getLowStockItems(db: Database.Database) {
-  return (db.prepare('SELECT * FROM inventory WHERE quantity <= reorderPoint ORDER BY quantity ASC').all() as any[]).map(mapItem);
+  return (db.prepare("SELECT * FROM inventory WHERE quantity <= reorderPoint AND category !== 'FINISHED_PRODUCT' ORDER BY quantity ASC").all() as any[]).map(mapItem);
 }
